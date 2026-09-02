@@ -49,6 +49,7 @@ class TextWorldSmokeLauncherTests(unittest.TestCase):
                 "actor_rollout_ref.rollout.max_model_len=4608", result.stdout
             )
             self.assertIn("behavior_weight=1.0", result.stdout)
+            self.assertIn("reward_kwargs.reward_mode=cauchy", result.stdout)
             self.assertIn("facts_weight=0.0", result.stdout)
             self.assertIn("trainer.logger=[\"console\"]", result.stdout)
             self.assertIn(

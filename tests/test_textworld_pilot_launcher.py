@@ -67,6 +67,47 @@ class TextWorldPilotLauncherTests(unittest.TestCase):
         self.assertIn("trainer.test_freq=4", result.stdout)
         self.assertIn("actor_rollout_ref.rollout.n=5", result.stdout)
 
+    def test_union_js_selects_the_consistency_service_with_matched_settings(self):
+        env = os.environ.copy()
+        env["REWARD_MODE"] = "union_js"
+
+        result = subprocess.run(
+            ["bash", str(LAUNCHER), "--dry-run"],
+            cwd=PROJECT_ROOT,
+            env=env,
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("reward_kwargs.reward_mode=union_js", result.stdout)
+        self.assertIn(
+            "reward_kwargs.consistency_api_url=http://127.0.0.1:8002",
+            result.stdout,
+        )
+        self.assertIn("reward_kwargs.consistency_top_k=64", result.stdout)
+        self.assertIn("trainer.total_training_steps=50", result.stdout)
+
+    def test_rejects_an_unknown_reward_mode_before_creating_output(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            output_dir = Path(tmpdir) / "output"
+            env = os.environ.copy()
+            env.update({"REWARD_MODE": "unknown", "OUTPUT_DIR": str(output_dir)})
+
+            result = subprocess.run(
+                ["bash", str(LAUNCHER), "--dry-run"],
+                cwd=PROJECT_ROOT,
+                env=env,
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+
+            self.assertEqual(result.returncode, 2)
+            self.assertIn("REWARD_MODE", result.stderr)
+            self.assertFalse(output_dir.exists())
+
 
 if __name__ == "__main__":
     unittest.main()

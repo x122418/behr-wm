@@ -20,10 +20,17 @@ VAL_DATA="${VAL_DATA:-${MAIN_ROOT}/data/processed/textworld_grpo_task_split_v1/v
 WORLD_MODEL="${WORLD_MODEL:-${MAIN_ROOT}/models/WorldModel-Textworld-Qwen2.5-7B}"
 REWARD_FN_PATH="${REWARD_FN_PATH:-${PROJECT_ROOT}/src/reward/behr_reward_textworld.py}"
 JUDGE_URL="${JUDGE_URL:-http://127.0.0.1:8000}"
+CONSISTENCY_URL="${CONSISTENCY_URL:-http://127.0.0.1:8002}"
+CONSISTENCY_TOP_K="${CONSISTENCY_TOP_K:-64}"
+REWARD_MODE="${REWARD_MODE:-cauchy}"
+case "${REWARD_MODE}" in
+    cauchy|union_js|full_vocab_js) ;;
+    *) echo "ERROR: unsupported REWARD_MODE: ${REWARD_MODE}" >&2; exit 2 ;;
+esac
 GPU_IDS="${CUDA_VISIBLE_DEVICES:-5,6,7}"
 N_GPUS="${N_GPUS:-$(awk -F, '{print NF}' <<<"${GPU_IDS}")}"
 ROLLOUT_TP="${ROLLOUT_TP:-1}"
-OUTPUT_DIR="${OUTPUT_DIR:-${PROJECT_ROOT}/outputs/checkpoints/textworld_smoke}"
+OUTPUT_DIR="${OUTPUT_DIR:-${PROJECT_ROOT}/outputs/checkpoints/textworld_${REWARD_MODE}_smoke}"
 EXPERIMENT_NAME="${EXPERIMENT_NAME:-textworld-behr-smoke}"
 GROUP_SIZE="${GROUP_SIZE:-2}"
 TOTAL_STEPS="${TOTAL_STEPS:-2}"
@@ -65,7 +72,9 @@ COMMAND=(
     custom_reward_function.name=compute_score
     ++custom_reward_function.reward_kwargs.use_http_judge=True
     "++custom_reward_function.reward_kwargs.judge_api_url=${JUDGE_URL}"
-    ++custom_reward_function.reward_kwargs.reward_mode=cauchy
+    "++custom_reward_function.reward_kwargs.reward_mode=${REWARD_MODE}"
+    "++custom_reward_function.reward_kwargs.consistency_api_url=${CONSISTENCY_URL}"
+    "++custom_reward_function.reward_kwargs.consistency_top_k=${CONSISTENCY_TOP_K}"
     ++custom_reward_function.reward_kwargs.behavior_scale_coef=1.0
     ++custom_reward_function.reward_kwargs.behavior_weight=1.0
     ++custom_reward_function.reward_kwargs.facts_weight=0.0
@@ -90,6 +99,8 @@ echo "  World model: ${WORLD_MODEL}"
 echo "  Train: ${TRAIN_DATA}"
 echo "  Validation: ${VAL_DATA}"
 echo "  Judge: ${JUDGE_URL}"
+echo "  Consistency scorer: ${CONSISTENCY_URL} (top-k=${CONSISTENCY_TOP_K})"
+echo "  Reward mode: ${REWARD_MODE}"
 echo "  Output: ${OUTPUT_DIR}"
 printf '  %s\n' "${COMMAND[@]}"
 
@@ -101,8 +112,14 @@ fi
 for path in "$TRAIN_DATA" "$VAL_DATA" "$REWARD_FN_PATH" "$WORLD_MODEL" "${PROJECT_ROOT}/.venv/bin/python"; do
     [ -e "$path" ] || { echo "ERROR: required path not found: $path" >&2; exit 1; }
 done
-curl -fsS --connect-timeout 10 "${JUDGE_URL}/health" >/dev/null || {
-    echo "ERROR: reference actor is not healthy at ${JUDGE_URL}" >&2
+if [[ "${REWARD_MODE}" == "cauchy" ]]; then
+    SCORER_URL="${JUDGE_URL}"
+else
+    SCORER_URL="${CONSISTENCY_URL}"
+fi
+curl --noproxy 127.0.0.1,localhost -fsS --connect-timeout 10 \
+    "${SCORER_URL}/health" >/dev/null || {
+    echo "ERROR: reward scorer is not healthy at ${SCORER_URL}" >&2
     exit 1
 }
 
