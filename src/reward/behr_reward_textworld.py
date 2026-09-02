@@ -55,6 +55,7 @@ DEFAULT_CONFIG = {
 }
 
 _http_judge_agent = None
+_consistency_http_client = None
 _format_validator = None
 
 
@@ -69,6 +70,9 @@ class PivotGRPOConfig:
     judge_model_path: str = "Qwen/Qwen3-8B"
     judge_api_url: str = "http://localhost:8000"
     api_timeout: float = 300.0
+    consistency_api_url: str = "http://127.0.0.1:8002"
+    consistency_top_k: int = 64
+    consistency_api_timeout: float = 300.0
     use_http_judge: bool = True
     use_full_judge: bool = True
     length_penalty_weight: float = 0.0
@@ -530,6 +534,57 @@ class TextWorldHTTPJudgeAgent:
         return result
 
 
+class TextWorldConsistencyHTTPClient:
+    """Thin client for the dedicated frozen-actor consistency service."""
+
+    REWARD_METRICS = {
+        "union_js": "union_topk_other_js",
+        "full_vocab_js": "full_vocab_js",
+    }
+
+    def __init__(self, config: PivotGRPOConfig, session=None):
+        self.config = config
+        self.api_url = (
+            config.consistency_api_url.rstrip("/")
+            + "/v1/behavior-consistency"
+        )
+        self.session = session or requests.Session()
+
+    def compute_reward(
+        self,
+        predicted_state: str,
+        real_state: str,
+        expert_action: str,
+        history: Optional[List[Dict[str, str]]],
+        reward_mode: str,
+    ) -> Dict[str, Any]:
+        reward_metric = self.REWARD_METRICS.get(reward_mode)
+        if reward_metric is None:
+            raise ValueError(f"unsupported consistency reward mode: {reward_mode}")
+        payload = {
+            "history": history or [],
+            "real_observation": real_state,
+            "predicted_observation": predicted_state,
+            "expert_action": expert_action,
+            "top_k": self.config.consistency_top_k,
+            "reward_metric": reward_metric,
+        }
+        try:
+            response = self.session.post(
+                self.api_url,
+                json=payload,
+                timeout=self.config.consistency_api_timeout,
+            )
+            response.raise_for_status()
+            result = response.json()
+            score = result.get("score")
+            if not isinstance(score, (int, float)) or not math.isfinite(score):
+                raise ValueError("consistency service returned a non-finite score")
+            return {**result, "api_failed": False}
+        except Exception as error:
+            return {"api_failed": True, "failure_reason": str(error)}
+
+
 # =============================================================================
 # 单例管理
 # =============================================================================
@@ -546,6 +601,13 @@ def get_http_judge_agent(config: PivotGRPOConfig):
     if _http_judge_agent is None:
         _http_judge_agent = TextWorldHTTPJudgeAgent(config)
     return _http_judge_agent
+
+
+def get_consistency_http_client(config: PivotGRPOConfig):
+    global _consistency_http_client
+    if _consistency_http_client is None:
+        _consistency_http_client = TextWorldConsistencyHTTPClient(config)
+    return _consistency_http_client
 
 
 def _compute_similarity_score(pred: str, real: str) -> float:
@@ -591,6 +653,9 @@ def compute_score(
     use_http_judge: bool = True,
     judge_api_url: str = "http://localhost:8000",
     api_timeout: float = 300.0,
+    consistency_api_url: str = "http://127.0.0.1:8002",
+    consistency_top_k: int = 64,
+    consistency_api_timeout: float = 300.0,
     **kwargs
 ) -> Dict[str, Any]:
     """
@@ -646,14 +711,23 @@ def compute_score(
         use_http_judge=use_http_judge,
         judge_api_url=judge_api_url,
         api_timeout=api_timeout,
+        consistency_api_url=consistency_api_url,
+        consistency_top_k=consistency_top_k,
+        consistency_api_timeout=consistency_api_timeout,
     )
     
     validator = get_format_validator()
     
-    if use_full_judge and use_http_judge:
+    consistency_mode = reward_mode in {"union_js", "full_vocab_js"}
+    if use_full_judge and use_http_judge and consistency_mode:
+        consistency_client = get_consistency_http_client(config)
+        judge = None
+    elif use_full_judge and use_http_judge:
         judge = get_http_judge_agent(config)
+        consistency_client = None
     else:
         judge = None
+        consistency_client = None
     
     # 初始化结果
     result = {
@@ -687,6 +761,7 @@ def compute_score(
         "behavior_scale_coef": behavior_scale_coef,
         "behavior_weight": behavior_weight,
         "facts_weight": facts_weight,
+        "api_failed": False,
     }
     
     # Step 1: Format Validation
@@ -707,7 +782,43 @@ def compute_score(
     # Step 2: BehR Reward
     behavior_score = 0.0
     
-    if use_full_judge and judge is not None and expert_action and ground_truth_str:
+    if (
+        consistency_mode
+        and use_full_judge
+        and consistency_client is not None
+        and expert_action
+        and ground_truth_str
+    ):
+        fidelity_result = consistency_client.compute_reward(
+            predicted_state=solution_str,
+            real_state=ground_truth_str,
+            expert_action=expert_action,
+            history=history,
+            reward_mode=reward_mode,
+        )
+        if fidelity_result.get("api_failed", False):
+            behavior_score = format_penalty
+            result["api_failed"] = True
+            result["failure_reason"] = fidelity_result.get(
+                "failure_reason", "consistency service failed"
+            )
+        else:
+            behavior_score = fidelity_result["score"]
+            result["api_failed"] = False
+            for key, value in fidelity_result.items():
+                if key not in {"score", "api_failed"}:
+                    result[key] = value
+        result["behavior_reward"] = behavior_score
+
+    elif consistency_mode:
+        behavior_score = format_penalty
+        result["behavior_reward"] = behavior_score
+        result["api_failed"] = True
+        result["failure_reason"] = (
+            "consistency reward requires HTTP scorer, ground truth, and expert action"
+        )
+
+    elif use_full_judge and judge is not None and expert_action and ground_truth_str:
         try:
             fidelity_result = judge.compute_behavioral_fidelity_reward(
                 predicted_state=solution_str,
