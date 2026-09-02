@@ -15,7 +15,7 @@ import requests
 import torch
 
 from src.data.score_textworld_actor_consistency import compute_consistency_metrics
-from src.reward.behr_reward_textworld import PivotGRPOConfig, TextWorldHTTPJudgeAgent
+from src.reward.textworld_actor_inputs import build_teacher_forced_actor_inputs
 
 
 def build_actor_inputs(
@@ -24,25 +24,9 @@ def build_actor_inputs(
     observation: str,
     logged_action: str,
 ) -> tuple[torch.Tensor, torch.Tensor]:
-    """Build teacher-forced actor inputs using the exact TextWorld reward prompt."""
-    judge = TextWorldHTTPJudgeAgent(PivotGRPOConfig())
-    judge._tokenizer = tokenizer
-    full_prompt, action_offset = judge._build_prompt_with_action(
-        state=observation,
-        action=logged_action,
-        history=history,
-    )
-    prefix = full_prompt[:action_offset]
-    prefix_ids = tokenizer.encode(prefix, add_special_tokens=False)
-    full_ids = tokenizer.encode(full_prompt, add_special_tokens=False)
-    if full_ids[: len(prefix_ids)] != prefix_ids:
-        raise ValueError("tokenization merged the action with its prompt boundary")
-    action_ids = full_ids[len(prefix_ids) :]
-    if not action_ids:
-        raise ValueError("logged action tokenized to an empty sequence")
-    return (
-        torch.tensor(full_ids[:-1], dtype=torch.long),
-        torch.tensor(action_ids, dtype=torch.long),
+    """Compatibility wrapper for the shared actor-input contract."""
+    return build_teacher_forced_actor_inputs(
+        tokenizer, history, observation, logged_action
     )
 
 
