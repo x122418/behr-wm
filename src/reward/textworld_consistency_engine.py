@@ -41,25 +41,6 @@ class TextWorldConsistencyEngine:
     def reward_from_js(js_divergence: float) -> float:
         return js_consistency_reward(js_divergence)
 
-    def _left_pad(
-        self, sequences: list[torch.Tensor]
-    ) -> tuple[torch.Tensor, torch.Tensor]:
-        pad_token_id = self.tokenizer.pad_token_id
-        if pad_token_id is None:
-            pad_token_id = getattr(self.tokenizer, "eos_token_id", None)
-        if pad_token_id is None:
-            raise ValueError("tokenizer must define pad_token_id or eos_token_id")
-        maximum = max(sequence.numel() for sequence in sequences)
-        batch = torch.full(
-            (len(sequences), maximum), int(pad_token_id), dtype=torch.long
-        )
-        attention_mask = torch.zeros_like(batch)
-        for row, sequence in enumerate(sequences):
-            length = sequence.numel()
-            batch[row, maximum - length :] = sequence
-            attention_mask[row, maximum - length :] = 1
-        return batch, attention_mask
-
     def score(
         self,
         history: list[dict[str, str]],
@@ -79,30 +60,37 @@ class TextWorldConsistencyEngine:
         if not torch.equal(real_action_ids, predicted_action_ids):
             raise ValueError("real and predicted prompts produced different action IDs")
         action_count = int(real_action_ids.numel())
-        input_ids, attention_mask = self._left_pad([real_ids, predicted_ids])
-
         waiting_started = time.monotonic()
         with self._inference_lock:
             queue_wait_seconds = time.monotonic() - waiting_started
             inference_started = time.monotonic()
             with torch.inference_mode():
-                outputs = self.model(
-                    input_ids=input_ids.to(self.device),
-                    attention_mask=attention_mask.to(self.device),
-                    use_cache=False,
-                    logits_to_keep=action_count,
-                )
+                output_logits = []
+                # Separate unpadded forwards reproduce the locked offline scorer.
+                # Padding unequal prompts causes material numerical drift on long
+                # trajectories under the reference actor.
+                for sequence in (real_ids, predicted_ids):
+                    input_ids = sequence.unsqueeze(0).to(self.device)
+                    attention_mask = torch.ones_like(input_ids)
+                    position_ids = attention_mask.long().cumsum(dim=-1) - 1
+                    outputs = self.model(
+                        input_ids=input_ids,
+                        attention_mask=attention_mask,
+                        position_ids=position_ids,
+                        use_cache=False,
+                        logits_to_keep=action_count,
+                    )
+                    output_logits.append(outputs.logits.squeeze(0))
             inference_seconds = time.monotonic() - inference_started
 
-        logits = outputs.logits
-        if logits.ndim != 3 or logits.shape[0] != 2:
-            raise RuntimeError("actor must return logits with shape [2, positions, vocab]")
-        if logits.shape[1] < action_count:
-            raise RuntimeError(
-                f"actor returned {logits.shape[1]} positions for "
-                f"{action_count} action tokens"
-            )
-        aligned_logits = logits[:, -action_count:, :].float()
+        for logits in output_logits:
+            if logits.ndim != 2 or logits.shape[0] < action_count:
+                raise RuntimeError(
+                    "actor must return at least one logit row per action token"
+                )
+        aligned_logits = torch.stack(
+            [logits[-action_count:, :].float() for logits in output_logits]
+        )
         metrics = compute_actor_distribution_metrics(
             aligned_logits[0],
             aligned_logits[1],
