@@ -10,6 +10,12 @@ LAUNCHER = PROJECT_ROOT / "train" / "run_grpo_textworld_smoke.sh"
 
 
 class TextWorldSmokeLauncherTests(unittest.TestCase):
+    def test_local_reward_services_bypass_environment_proxies(self):
+        launcher = LAUNCHER.read_text(encoding="utf-8")
+
+        self.assertIn("export NO_PROXY=127.0.0.1,localhost", launcher)
+        self.assertIn("export no_proxy=127.0.0.1,localhost", launcher)
+
     def test_dry_run_prints_textworld_two_step_command_without_side_effects(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             output_dir = Path(tmpdir) / "output"
@@ -69,7 +75,6 @@ class TextWorldSmokeLauncherTests(unittest.TestCase):
                 result.stdout,
             )
             self.assertFalse(output_dir.exists())
-
 
 if __name__ == "__main__":
     unittest.main()

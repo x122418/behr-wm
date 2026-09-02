@@ -92,7 +92,6 @@ COMMAND=(
     "trainer.total_training_steps=${TOTAL_STEPS}"
     "trainer.default_local_dir=${OUTPUT_DIR}"
 )
-
 echo "TextWorld BehR GRPO smoke configuration"
 echo "  GPUs: ${GPU_IDS} (${N_GPUS})"
 echo "  World model: ${WORLD_MODEL}"
@@ -128,4 +127,6 @@ export CUDA_VISIBLE_DEVICES="$GPU_IDS"
 export RAY_DEDUP_LOGS=0
 export TOKENIZERS_PARALLELISM=true
 export WANDB_MODE=disabled
+export NO_PROXY=127.0.0.1,localhost
+export no_proxy=127.0.0.1,localhost
 "${COMMAND[@]}" 2>&1 | tee "${OUTPUT_DIR}/logs/train.log"
