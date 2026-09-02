@@ -18,6 +18,9 @@ if __package__ in (None, ""):
 
 from src.data.build_textworld_pilot import write_jsonl
 from src.data.generate_textworld_logged_actions import TEXTWORLD_SYSTEM_PROMPT
+from src.reward.actor_distribution_metrics import (
+    compute_actor_distribution_metrics,
+)
 
 
 def validate_scorer_contract(
@@ -96,7 +99,7 @@ def _js_from_probs(p: torch.Tensor, q: torch.Tensor) -> torch.Tensor:
     return 0.5 * p_term.sum() + 0.5 * q_term.sum()
 
 
-def compute_consistency_metrics(
+def _legacy_compute_consistency_metrics(
     real_logits: torch.Tensor,
     candidate_logits: torch.Tensor,
     action_token_ids: torch.Tensor,
@@ -201,6 +204,9 @@ def compute_consistency_metrics(
             torch.stack(union_other_js_values).mean()
         )
     return result
+
+
+compute_consistency_metrics = compute_actor_distribution_metrics
 
 
 def score_observation_logits(
