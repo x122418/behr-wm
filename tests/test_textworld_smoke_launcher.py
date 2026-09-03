@@ -16,6 +16,25 @@ class TextWorldSmokeLauncherTests(unittest.TestCase):
         self.assertIn("export NO_PROXY=127.0.0.1,localhost", launcher)
         self.assertIn("export no_proxy=127.0.0.1,localhost", launcher)
 
+    def test_local_reference_actor_path_is_forwarded_to_reward_workers(self):
+        env = os.environ.copy()
+        env["JUDGE_MODEL_PATH"] = "/models/local-qwen3-8b"
+
+        result = subprocess.run(
+            ["bash", str(LAUNCHER), "--dry-run"],
+            cwd=PROJECT_ROOT,
+            env=env,
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn(
+            "reward_kwargs.judge_model_path=/models/local-qwen3-8b",
+            result.stdout,
+        )
+
     def test_dry_run_prints_textworld_two_step_command_without_side_effects(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             output_dir = Path(tmpdir) / "output"
