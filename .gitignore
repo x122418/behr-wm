@@ -37,3 +37,6 @@ models/
 *.log
 .wandb/
 wandb/
+
+# Local isolated development worktrees
+.worktrees/

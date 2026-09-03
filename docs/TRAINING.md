@@ -215,3 +215,52 @@ The paper numbers were obtained with:
 We observed that `cauchy` reward mode converges more stably than `exponential`
 at large $|\Delta|$ (better gradient preservation); `exponential` remains a
 valid choice for smoother reward landscapes.
+
+## 9. TextWorld actor-distribution consistency reward
+
+The JS reward uses a dedicated frozen-actor service. Full-vocabulary logits
+remain inside that process; GRPO workers receive scalar metrics only.
+
+Start one Qwen3-8B scorer on its own GPU:
+
+```bash
+bash scripts/servers/start_textworld_consistency_server.sh \
+  --model /DATA/disk1/huangjiaqi_data/qwen_model/Qwen3-8B \
+  --gpu 5 \
+  --port 8002 \
+  --top-k 64
+```
+
+Before training, compare the service against locked offline results. This
+reuses existing exact metrics and therefore does not load a second actor model:
+
+```bash
+NO_PROXY=127.0.0.1,localhost PYTHONPATH=. \
+.venv/bin/python scripts/probes/compare_textworld_consistency_service.py \
+  --input outputs/evaluation/textworld_sft_val_pilot_1000/results.jsonl \
+  --limit 8 \
+  --service-url http://127.0.0.1:8002 \
+  --top-k 64 \
+  --tolerance 1e-6 \
+  --output outputs/probes/textworld_consistency_service/equivalence.json
+```
+
+Only after equivalence passes, run the two-step JS smoke:
+
+```bash
+REWARD_MODE=union_js \
+CONSISTENCY_URL=http://127.0.0.1:8002 \
+bash train/run_grpo_textworld_smoke.sh
+```
+
+The 50-step matched pilot comes last:
+
+```bash
+REWARD_MODE=union_js \
+CONSISTENCY_URL=http://127.0.0.1:8002 \
+bash train/run_grpo_textworld_pilot.sh
+```
+
+Use `REWARD_MODE=cauchy` for the original BehR control. Do not start either
+50-step pilot unless the service equivalence probe and the corresponding
+two-step smoke both pass with finite rewards and zero scorer API failures.
