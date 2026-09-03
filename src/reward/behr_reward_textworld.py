@@ -630,6 +630,29 @@ def _similarity_to_behavior_reward(similarity: float, reward_mode: str) -> float
         return similarity
 
 
+def _consistency_result_defaults(reward_mode: str, top_k: int) -> Dict[str, Any]:
+    """Return a stable reward-extra-info schema for consistency modes."""
+    reward_metric = TextWorldConsistencyHTTPClient.REWARD_METRICS[reward_mode]
+    return {
+        "action_token_count": 0,
+        "mean_logprob_real": 0.0,
+        "mean_logprob_candidate": 0.0,
+        "original_behr_abs_mean_logprob_diff": 0.0,
+        "original_behr_cauchy_reward": 0.0,
+        "position_logged_token_logprob_l1": 0.0,
+        "full_vocab_kl_real_to_candidate": 0.0,
+        "full_vocab_js": 0.0,
+        f"top{top_k}_truncated_kl_real_to_candidate": 0.0,
+        f"top{top_k}_union_js": 0.0,
+        f"top{top_k}_union_other_js": 0.0,
+        "reward_metric": reward_metric,
+        "model": "",
+        "dtype": "",
+        "queue_wait_seconds": 0.0,
+        "inference_seconds": 0.0,
+    }
+
+
 # =============================================================================
 # verl 主入口
 # =============================================================================
@@ -762,7 +785,10 @@ def compute_score(
         "behavior_weight": behavior_weight,
         "facts_weight": facts_weight,
         "api_failed": False,
+        "failure_reason": "",
     }
+    if consistency_mode:
+        result.update(_consistency_result_defaults(reward_mode, consistency_top_k))
     
     # Step 1: Format Validation
     if not solution_str:
@@ -806,7 +832,7 @@ def compute_score(
             behavior_score = fidelity_result["score"]
             result["api_failed"] = False
             for key, value in fidelity_result.items():
-                if key not in {"score", "api_failed"}:
+                if key in result and key not in {"score", "api_failed"}:
                     result[key] = value
         result["behavior_reward"] = behavior_score
 

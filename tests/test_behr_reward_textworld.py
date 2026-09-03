@@ -132,6 +132,54 @@ class ComputeScoreBackendSelectionTests(unittest.TestCase):
         self.assertFalse(result["api_failed"])
         self.assertFalse(result["used_fallback"])
 
+    def test_union_js_keeps_reward_extra_info_schema_for_early_returns(self):
+        class ConsistencyClient:
+            def compute_reward(self, **kwargs):
+                return {
+                    "score": 0.75,
+                    "api_failed": False,
+                    "action_token_count": 3,
+                    "mean_logprob_real": -0.2,
+                    "mean_logprob_candidate": -0.3,
+                    "original_behr_abs_mean_logprob_diff": 0.1,
+                    "original_behr_cauchy_reward": 0.9,
+                    "position_logged_token_logprob_l1": 0.1,
+                    "full_vocab_kl_real_to_candidate": 0.04,
+                    "full_vocab_js": 0.02,
+                    "top64_truncated_kl_real_to_candidate": 0.03,
+                    "top64_union_js": 0.02,
+                    "top64_union_other_js": 0.02,
+                    "reward_metric": "union_topk_other_js",
+                    "model": "fake-actor",
+                    "dtype": "torch.bfloat16",
+                    "queue_wait_seconds": 0.01,
+                    "inference_seconds": 0.02,
+                }
+
+        with patch.object(
+            reward_module, "get_consistency_http_client", return_value=ConsistencyClient()
+        ):
+            valid = compute_score(
+                "textworld_grpo",
+                "You are in a predicted room >",
+                "You are in a real room >",
+                extra_info={"expert_action": "look", "history": []},
+                reward_mode="union_js",
+                consistency_top_k=64,
+            )
+            empty = compute_score(
+                "textworld_grpo",
+                "",
+                "You are in a real room >",
+                extra_info={"expert_action": "look", "history": []},
+                reward_mode="union_js",
+                consistency_top_k=64,
+            )
+
+        self.assertEqual(set(valid), set(empty))
+        self.assertEqual(empty["action_token_count"], 0)
+        self.assertEqual(empty["top64_union_other_js"], 0.0)
+
     def test_js_failure_uses_the_failure_penalty_without_similarity_fallback(self):
         class FailingClient:
             def compute_reward(self, **kwargs):
