@@ -76,7 +76,9 @@ class TextWorldSmokeLauncherTests(unittest.TestCase):
             self.assertIn("behavior_weight=1.0", result.stdout)
             self.assertIn("reward_kwargs.reward_mode=cauchy", result.stdout)
             self.assertIn("facts_weight=0.0", result.stdout)
-            self.assertIn("trainer.logger=[\"console\"]", result.stdout)
+            self.assertIn(
+                'trainer.logger=["console","tensorboard"]', result.stdout
+            )
             self.assertIn(
                 "actor_rollout_ref.ref.log_prob_micro_batch_size_per_gpu=1",
                 result.stdout,
@@ -94,6 +96,10 @@ class TextWorldSmokeLauncherTests(unittest.TestCase):
                 result.stdout,
             )
             self.assertFalse(output_dir.exists())
+
+            self.assertIn(
+                f"TENSORBOARD_DIR={output_dir / 'tensorboard'}", result.stdout
+            )
 
 if __name__ == "__main__":
     unittest.main()

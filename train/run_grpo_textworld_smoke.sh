@@ -37,6 +37,7 @@ GROUP_SIZE="${GROUP_SIZE:-2}"
 TOTAL_STEPS="${TOTAL_STEPS:-2}"
 SAVE_FREQ="${SAVE_FREQ:--1}"
 VAL_FREQ="${VAL_FREQ:--1}"
+TENSORBOARD_DIR="${TENSORBOARD_DIR:-${OUTPUT_DIR}/tensorboard}"
 
 COMMAND=(
     "${PROJECT_ROOT}/.venv/bin/python" -m verl.trainer.main_ppo
@@ -82,7 +83,7 @@ COMMAND=(
     ++custom_reward_function.reward_kwargs.facts_weight=0.0
     ++custom_reward_function.reward_kwargs.format_penalty=-1.0
     ++custom_reward_function.reward_kwargs.max_workers=4
-    'trainer.logger=["console"]'
+    'trainer.logger=["console","tensorboard"]'
     trainer.project_name=behr-wm-textworld
     "trainer.experiment_name=${EXPERIMENT_NAME}"
     "trainer.n_gpus_per_node=${N_GPUS}"
@@ -103,6 +104,7 @@ echo "  Judge: ${JUDGE_URL}"
 echo "  Consistency scorer: ${CONSISTENCY_URL} (top-k=${CONSISTENCY_TOP_K})"
 echo "  Reward mode: ${REWARD_MODE}"
 echo "  Output: ${OUTPUT_DIR}"
+echo "  TENSORBOARD_DIR=${TENSORBOARD_DIR}"
 printf '  %s\n' "${COMMAND[@]}"
 
 if "$DRY_RUN"; then
@@ -129,6 +131,7 @@ export CUDA_VISIBLE_DEVICES="$GPU_IDS"
 export RAY_DEDUP_LOGS=0
 export TOKENIZERS_PARALLELISM=true
 export WANDB_MODE=disabled
+export TENSORBOARD_DIR
 export NO_PROXY=127.0.0.1,localhost
 export no_proxy=127.0.0.1,localhost
 "${COMMAND[@]}" 2>&1 | tee "${OUTPUT_DIR}/logs/train.log"

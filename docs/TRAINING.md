@@ -264,3 +264,28 @@ bash train/run_grpo_textworld_pilot.sh
 Use `REWARD_MODE=cauchy` for the original BehR control. Do not start either
 50-step pilot unless the service equivalence probe and the corresponding
 two-step smoke both pass with finite rewards and zero scorer API failures.
+
+## 10. TensorBoard metrics
+
+The TextWorld smoke and pilot launchers enable both console and TensorBoard
+logging. Events are written to `${OUTPUT_DIR}/tensorboard` by default; override
+that location with `TENSORBOARD_DIR` when needed.
+
+```bash
+tensorboard --logdir outputs/checkpoints --port 6006
+```
+
+GRPO training curves include `actor/pg_loss`, `actor/kl_loss`, entropy,
+gradient norm, reward, advantage, memory, and throughput metrics. Validation
+uses rollout reward metrics rather than a supervised cross-entropy
+`val_loss`. Report held-out reward/consistency and downstream EM or
+trajectory metrics separately.
+
+For a run started with console-only logging, convert its completed log once:
+
+```bash
+PYTHONPATH=. .venv/bin/python \
+  scripts/analysis/console_log_to_tensorboard.py \
+  --input outputs/checkpoints/<run>/logs/train.log \
+  --output-dir outputs/checkpoints/<run>/tensorboard
+```
