@@ -31,6 +31,7 @@ esac
 GPU_IDS="${CUDA_VISIBLE_DEVICES:-5,6,7}"
 N_GPUS="${N_GPUS:-$(awk -F, '{print NF}' <<<"${GPU_IDS}")}"
 ROLLOUT_TP="${ROLLOUT_TP:-1}"
+ROLLOUT_GPU_MEMORY_UTILIZATION="${ROLLOUT_GPU_MEMORY_UTILIZATION:-0.35}"
 OUTPUT_DIR="${OUTPUT_DIR:-${PROJECT_ROOT}/outputs/checkpoints/textworld_${REWARD_MODE}_smoke}"
 EXPERIMENT_NAME="${EXPERIMENT_NAME:-textworld-behr-smoke}"
 GROUP_SIZE="${GROUP_SIZE:-2}"
@@ -63,7 +64,7 @@ COMMAND=(
     actor_rollout_ref.model.enable_gradient_checkpointing=True
     actor_rollout_ref.rollout.name=vllm
     "actor_rollout_ref.rollout.tensor_model_parallel_size=${ROLLOUT_TP}"
-    actor_rollout_ref.rollout.gpu_memory_utilization=0.35
+    "actor_rollout_ref.rollout.gpu_memory_utilization=${ROLLOUT_GPU_MEMORY_UTILIZATION}"
     actor_rollout_ref.rollout.log_prob_micro_batch_size_per_gpu=1
     actor_rollout_ref.rollout.max_model_len=4608
     actor_rollout_ref.rollout.enforce_eager=True

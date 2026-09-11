@@ -50,6 +50,7 @@ class TextWorldPilotLauncherTests(unittest.TestCase):
                 "SAVE_FREQ": "3",
                 "VAL_FREQ": "4",
                 "GROUP_SIZE": "5",
+                "ROLLOUT_GPU_MEMORY_UTILIZATION": "0.25",
             }
         )
         result = subprocess.run(
@@ -66,6 +67,10 @@ class TextWorldPilotLauncherTests(unittest.TestCase):
         self.assertIn("trainer.save_freq=3", result.stdout)
         self.assertIn("trainer.test_freq=4", result.stdout)
         self.assertIn("actor_rollout_ref.rollout.n=5", result.stdout)
+        self.assertIn(
+            "actor_rollout_ref.rollout.gpu_memory_utilization=0.25",
+            result.stdout,
+        )
 
     def test_union_js_selects_the_consistency_service_with_matched_settings(self):
         env = os.environ.copy()
