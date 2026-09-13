@@ -329,3 +329,100 @@ PYTHONPATH=. .venv/bin/python \
   --input outputs/checkpoints/<run>/logs/train.log \
   --output-dir outputs/checkpoints/<run>/tensorboard
 ```
+
+## 10. Formal 2,000-step TextWorld comparison
+
+The first formal scale-up uses the full task-disjoint training parquet as a
+deterministically shuffled pool. Each trained arm receives the same first
+2,000 batches (`data.seed=42`, batch size 4), `G=4`, and rollout temperature
+0.7. Run the arms sequentially in this order:
+
+1. `behr`
+2. `union_js`
+3. `union_js_sft`
+
+Reserve two otherwise empty H100 GPUs for VERL and one for the frozen actor.
+Require at least 130 GB free on `/DATA/disk1` before starting an arm.
+
+For BehR, start the reference completion server on the scorer GPU:
+
+```bash
+bash scripts/servers/start_reference_agent_server.sh \
+  -m /DATA/disk1/huangjiaqi_data/qwen_model/Qwen3-8B \
+  -p 8000 -gpu 7 -l 4608 --shared --util 0.30
+curl --noproxy '*' -fsS http://127.0.0.1:8000/health
+```
+
+For either Union-JS arm, use the consistency scorer instead:
+
+```bash
+bash scripts/servers/start_textworld_consistency_server.sh \
+  --model /DATA/disk1/huangjiaqi_data/qwen_model/Qwen3-8B \
+  --gpu 7 --port 8002 --top-k 64
+curl --noproxy '*' -fsS http://127.0.0.1:8002/health
+```
+
+Inspect the complete resolved command without creating output:
+
+```bash
+FORMAL_ARM=behr CUDA_VISIBLE_DEVICES=5,6 N_GPUS=2 \
+  bash train/run_grpo_textworld_formal.sh --dry-run
+```
+
+Before a long run, use the exact formal data, sampling, and seed settings for a
+fresh two-step GPU gate while disabling checkpointing and validation:
+
+```bash
+FORMAL_ARM=union_js_sft CUDA_VISIBLE_DEVICES=5,6 N_GPUS=2 \
+TOTAL_STEPS=2 SAVE_FREQ=-1 VAL_FREQ=-1 \
+OUTPUT_DIR=outputs/checkpoints/textworld_formal_union_js_sft_smoke2_seed42 \
+  bash train/run_grpo_textworld_formal.sh
+```
+
+Start a formal arm only after the smoke reports two finite steps, no OOM, and
+no scorer failure:
+
+```bash
+FORMAL_ARM=behr CUDA_VISIBLE_DEVICES=5,6 N_GPUS=2 \
+  bash train/run_grpo_textworld_formal.sh
+```
+
+The default run validates every 250 steps, saves every 1,000 steps, and sets
+`trainer.max_actor_ckpt_to_keep=1`. To resume the exact same manifest and
+latest checkpoint:
+
+```bash
+FORMAL_ARM=behr FORMAL_RESUME=1 CUDA_VISIBLE_DEVICES=5,6 N_GPUS=2 \
+  bash train/run_grpo_textworld_formal.sh
+```
+
+Do not set `FORMAL_RESUME=1` for a different arm, seed, model, scorer, or
+training budget; the immutable manifest rejects such a mismatch.
+
+After step 2,000, verify both FSDP rank shards and merge the actor:
+
+```bash
+PYTHONPATH=. .venv/bin/python -m verl.model_merger merge --backend fsdp \
+  --local_dir outputs/checkpoints/textworld_formal_<arm>_steps2000_seed42/global_step_2000/actor \
+  --target_dir outputs/merged_models/textworld_formal_<arm>_steps2000_seed42
+```
+
+Serve the merged model on port 8001, then run the common deterministic
+transition evaluator on validation and test. Use a separate GPU for the frozen
+actor:
+
+```bash
+OUTPUT_DIR=outputs/evaluation/textworld_formal_<arm>_steps2000_seed42_val1000 \
+ACTOR_GPU=5 LIMIT=1000 CONCURRENCY=8 \
+  bash scripts/evaluate_textworld_validation_baseline.sh
+
+INPUT_DATA=../../data/processed/textworld_grpo_task_split_v1/test/test.parquet \
+OUTPUT_DIR=outputs/evaluation/textworld_formal_<arm>_steps2000_seed42_test1820 \
+ACTOR_GPU=5 LIMIT=1820 CONCURRENCY=8 \
+  bash scripts/evaluate_textworld_validation_baseline.sh
+```
+
+Before deleting an FSDP checkpoint, require `total == successful`,
+`errors == 0`, unique item IDs, finite metrics, a loadable merged config and
+tokenizer, and matching input provenance. Keep the merged model, manifest,
+training/TensorBoard logs, and evaluation JSONL/JSON outputs.
