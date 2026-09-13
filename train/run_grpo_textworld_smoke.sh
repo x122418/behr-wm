@@ -37,6 +37,14 @@ EXPERIMENT_NAME="${EXPERIMENT_NAME:-textworld-behr-smoke}"
 GROUP_SIZE="${GROUP_SIZE:-2}"
 ROLLOUT_TEMPERATURE="${ROLLOUT_TEMPERATURE:-1.3}"
 SFT_LOSS_COEF="${SFT_LOSS_COEF:-0.0}"
+DATA_SEED="${DATA_SEED:-}"
+ACTOR_DATA_LOADER_SEED="${ACTOR_DATA_LOADER_SEED:-}"
+MAX_ACTOR_CKPT_TO_KEEP="${MAX_ACTOR_CKPT_TO_KEEP:-}"
+RESUME_MODE="${RESUME_MODE:-}"
+case "${RESUME_MODE}" in
+    ""|auto|disable|resume_path) ;;
+    *) echo "ERROR: unsupported RESUME_MODE: ${RESUME_MODE}" >&2; exit 2 ;;
+esac
 TOTAL_STEPS="${TOTAL_STEPS:-2}"
 SAVE_FREQ="${SAVE_FREQ:--1}"
 VAL_FREQ="${VAL_FREQ:--1}"
@@ -99,6 +107,18 @@ COMMAND=(
     "trainer.total_training_steps=${TOTAL_STEPS}"
     "trainer.default_local_dir=${OUTPUT_DIR}"
 )
+if [[ -n "${DATA_SEED}" ]]; then
+    COMMAND+=("data.seed=${DATA_SEED}")
+fi
+if [[ -n "${ACTOR_DATA_LOADER_SEED}" ]]; then
+    COMMAND+=("actor_rollout_ref.actor.data_loader_seed=${ACTOR_DATA_LOADER_SEED}")
+fi
+if [[ -n "${MAX_ACTOR_CKPT_TO_KEEP}" ]]; then
+    COMMAND+=("trainer.max_actor_ckpt_to_keep=${MAX_ACTOR_CKPT_TO_KEEP}")
+fi
+if [[ -n "${RESUME_MODE}" ]]; then
+    COMMAND+=("trainer.resume_mode=${RESUME_MODE}")
+fi
 echo "TextWorld BehR GRPO smoke configuration"
 echo "  GPUs: ${GPU_IDS} (${N_GPUS})"
 echo "  World model: ${WORLD_MODEL}"

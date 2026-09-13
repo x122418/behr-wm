@@ -10,6 +10,77 @@ LAUNCHER = PROJECT_ROOT / "train" / "run_grpo_textworld_smoke.sh"
 
 
 class TextWorldSmokeLauncherTests(unittest.TestCase):
+    def test_dry_run_forwards_explicit_reproducibility_and_retention_controls(self):
+        env = os.environ.copy()
+        env.update(
+            {
+                "DATA_SEED": "42",
+                "ACTOR_DATA_LOADER_SEED": "42",
+                "MAX_ACTOR_CKPT_TO_KEEP": "1",
+                "RESUME_MODE": "disable",
+            }
+        )
+
+        result = subprocess.run(
+            ["bash", str(LAUNCHER), "--dry-run"],
+            cwd=PROJECT_ROOT,
+            env=env,
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        for expected in (
+            "data.seed=42",
+            "actor_rollout_ref.actor.data_loader_seed=42",
+            "trainer.max_actor_ckpt_to_keep=1",
+            "trainer.resume_mode=disable",
+        ):
+            self.assertIn(expected, result.stdout)
+
+    def test_omitted_controls_preserve_verl_defaults(self):
+        env = os.environ.copy()
+        for key in (
+            "DATA_SEED",
+            "ACTOR_DATA_LOADER_SEED",
+            "MAX_ACTOR_CKPT_TO_KEEP",
+            "RESUME_MODE",
+        ):
+            env.pop(key, None)
+
+        result = subprocess.run(
+            ["bash", str(LAUNCHER), "--dry-run"],
+            cwd=PROJECT_ROOT,
+            env=env,
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertNotIn("data.seed=", result.stdout)
+        self.assertNotIn("actor_rollout_ref.actor.data_loader_seed=", result.stdout)
+        self.assertNotIn("trainer.max_actor_ckpt_to_keep=", result.stdout)
+        self.assertNotIn("trainer.resume_mode=", result.stdout)
+
+    def test_invalid_resume_mode_fails_before_creating_output(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            output_dir = Path(tmpdir) / "output"
+            env = {**os.environ, "RESUME_MODE": "sometimes", "OUTPUT_DIR": str(output_dir)}
+            result = subprocess.run(
+                ["bash", str(LAUNCHER)],
+                cwd=PROJECT_ROOT,
+                env=env,
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("unsupported RESUME_MODE", result.stderr)
+        self.assertFalse(output_dir.exists())
+
     def test_dry_run_forwards_auxiliary_sft_coefficient(self):
         env = os.environ.copy()
         env["SFT_LOSS_COEF"] = "0.1"
