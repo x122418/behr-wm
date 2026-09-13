@@ -343,6 +343,11 @@ deterministically shuffled pool. Each trained arm receives the same first
 
 Reserve two otherwise empty H100 GPUs for VERL and one for the frozen actor.
 Require at least 130 GB free on `/DATA/disk1` before starting an arm.
+The formal launcher also exports `HF_DATASETS_CACHE` to
+`/DATA/disk1/huangjiaqi_cache/lwm_hf_datasets` by default. This keeps the
+expanded Arrow cache off the nearly full system disk and lets all three arms
+reuse one cache. Set `HF_DATASETS_CACHE` explicitly only when moving the run to
+another data disk.
 
 For BehR, start the reference completion server on the scorer GPU:
 

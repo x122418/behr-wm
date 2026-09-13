@@ -89,6 +89,17 @@ class TextWorldFormalLauncherTests(unittest.TestCase):
         self.assertIn("textworld_formal_run.py", launcher)
         self.assertIn('PREFLIGHT_MODE=(--resume)', launcher)
 
+    def test_formal_run_reports_explicit_dataset_cache_on_data_disk(self):
+        cache_path = "/DATA/disk1/test-cache-for-formal-launcher"
+
+        result = self.dry_run(
+            "union_js_sft",
+            HF_DATASETS_CACHE=cache_path,
+        )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn(f"HF datasets cache: {cache_path}", result.stdout)
+
 
 if __name__ == "__main__":
     unittest.main()
