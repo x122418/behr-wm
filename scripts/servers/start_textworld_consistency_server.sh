@@ -8,6 +8,8 @@ GPU=""
 HOST="0.0.0.0"
 PORT="8002"
 TOP_K="64"
+BATCH_WAIT_MS="5"
+MAX_BATCH_SIZE="32"
 DRY_RUN=false
 
 while [[ $# -gt 0 ]]; do
@@ -17,9 +19,11 @@ while [[ $# -gt 0 ]]; do
         --host) HOST="${2:-}"; shift 2 ;;
         --port) PORT="${2:-}"; shift 2 ;;
         --top-k) TOP_K="${2:-}"; shift 2 ;;
+        --batch-wait-ms) BATCH_WAIT_MS="${2:-}"; shift 2 ;;
+        --max-batch-size) MAX_BATCH_SIZE="${2:-}"; shift 2 ;;
         --dry-run) DRY_RUN=true; shift ;;
         -h|--help)
-            echo "Usage: $0 --model PATH --gpu ID [--port 8002] [--top-k 64] [--dry-run]"
+            echo "Usage: $0 --model PATH --gpu ID [--port 8002] [--top-k 64] [--batch-wait-ms 5] [--max-batch-size 32] [--dry-run]"
             exit 0
             ;;
         *) echo "ERROR: unknown argument: $1" >&2; exit 2 ;;
@@ -45,6 +49,8 @@ COMMAND=(
     --host "${HOST}"
     --port "${PORT}"
     --top-k "${TOP_K}"
+    --batch-wait-ms "${BATCH_WAIT_MS}"
+    --max-batch-size "${MAX_BATCH_SIZE}"
 )
 
 echo "TextWorld actor consistency service"
@@ -54,6 +60,8 @@ echo "  Model: ${MODEL}"
 echo "  Host: ${HOST}"
 echo "  Port: ${PORT}"
 echo "  Top-k: ${TOP_K}"
+echo "  Batch wait:      ${BATCH_WAIT_MS} ms"
+echo "  Max batch size:  ${MAX_BATCH_SIZE}"
 printf '  %s\n' "${COMMAND[@]}"
 
 if "$DRY_RUN"; then

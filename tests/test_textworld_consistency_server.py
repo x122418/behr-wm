@@ -1,5 +1,6 @@
 import unittest
 from unittest.mock import patch
+import asyncio
 
 import httpx
 
@@ -28,6 +29,29 @@ class FakeEngine:
             "action_token_count": 2,
             "model": self.model_name,
         }
+
+
+class FakeBatchEngine(FakeEngine):
+    def __init__(self, batch_error=None):
+        super().__init__()
+        self.batch_calls = []
+        self.batch_error = batch_error
+
+    def score_batch(self, requests):
+        self.batch_calls.append(requests)
+        if self.batch_error is not None:
+            raise self.batch_error
+        return [
+            {
+                "score": float(request["predicted_observation"].split()[-1]),
+                "reward_metric": request["reward_metric"],
+                "full_vocab_js": 0.02,
+                "top64_union_other_js": 0.02,
+                "action_token_count": 2,
+                "model": self.model_name,
+            }
+            for request in requests
+        ]
 
 
 def valid_payload():
@@ -72,19 +96,110 @@ class TextWorldConsistencyServerTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(engine.calls[0]["expert_action"], "go east")
         self.assertNotIn("top_k", engine.calls[0])
 
+    async def test_microbatch_coalesces_concurrent_requests_and_preserves_results(self):
+        engine = FakeBatchEngine()
+        app = create_app(
+            engine=engine,
+            batch_wait_ms=5.0,
+            max_batch_size=8,
+        )
+        payloads = []
+        for index in range(4):
+            payload = valid_payload()
+            payload["predicted_observation"] = f"predicted {index}"
+            payloads.append(payload)
+
+        responses = await asyncio.gather(
+            *[
+                self.request(
+                    app,
+                    "POST",
+                    "/v1/behavior-consistency",
+                    json=payload,
+                )
+                for payload in payloads
+            ]
+        )
+
+        self.assertEqual([response.status_code for response in responses], [200] * 4)
+        self.assertEqual([response.json()["score"] for response in responses], [0, 1, 2, 3])
+        self.assertEqual(len(engine.batch_calls), 1)
+        self.assertEqual(len(engine.batch_calls[0]), 4)
+        self.assertEqual(engine.calls, [])
+
+    async def test_microbatch_never_exceeds_the_configured_maximum(self):
+        engine = FakeBatchEngine()
+        app = create_app(
+            engine=engine,
+            batch_wait_ms=1.0,
+            max_batch_size=2,
+        )
+        payloads = []
+        for index in range(5):
+            payload = valid_payload()
+            payload["predicted_observation"] = f"predicted {index}"
+            payloads.append(payload)
+
+        responses = await asyncio.gather(
+            *[
+                self.request(
+                    app,
+                    "POST",
+                    "/v1/behavior-consistency",
+                    json=payload,
+                )
+                for payload in payloads
+            ]
+        )
+
+        self.assertTrue(all(response.status_code == 200 for response in responses))
+        self.assertEqual([len(batch) for batch in engine.batch_calls], [2, 2, 1])
+
+    async def test_value_error_in_one_microbatch_falls_back_for_error_isolation(self):
+        class PartiallyInvalidEngine(FakeBatchEngine):
+            def score(self, **kwargs):
+                if kwargs["predicted_observation"] == "bad":
+                    raise ValueError("different action IDs")
+                return super().score(**kwargs)
+
+        engine = PartiallyInvalidEngine(batch_error=ValueError("batch invalid"))
+        app = create_app(
+            engine=engine,
+            batch_wait_ms=1.0,
+            max_batch_size=8,
+        )
+        good = valid_payload()
+        bad = valid_payload()
+        bad["predicted_observation"] = "bad"
+
+        good_response, bad_response = await asyncio.gather(
+            self.request(app, "POST", "/v1/behavior-consistency", json=good),
+            self.request(app, "POST", "/v1/behavior-consistency", json=bad),
+        )
+
+        self.assertEqual(good_response.status_code, 200)
+        self.assertEqual(bad_response.status_code, 422)
+        self.assertEqual(len(engine.batch_calls), 1)
+
     async def test_health_is_unavailable_before_an_engine_is_ready(self):
         response = await self.request(create_app(), "GET", "/health")
 
         self.assertEqual(response.status_code, 503)
 
     async def test_health_and_model_provenance_are_exposed_after_readiness(self):
-        app = create_app(engine=FakeEngine())
+        app = create_app(
+            engine=FakeEngine(),
+            batch_wait_ms=5.0,
+            max_batch_size=32,
+        )
 
         health = await self.request(app, "GET", "/health")
         models = await self.request(app, "GET", "/v1/models")
 
         self.assertEqual(health.status_code, 200)
         self.assertEqual(health.json()["model"], "fake-actor")
+        self.assertEqual(health.json()["batch_wait_ms"], 5.0)
+        self.assertEqual(health.json()["max_batch_size"], 32)
         self.assertEqual(models.json()["data"][0]["id"], "fake-actor")
 
     async def test_rejects_invalid_fields_and_a_top_k_mismatch(self):

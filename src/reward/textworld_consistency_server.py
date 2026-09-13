@@ -29,10 +29,103 @@ class ConsistencyRequest(BaseModel):
     reward_metric: Literal["union_topk_other_js", "full_vocab_js"]
 
 
-def create_app(engine: TextWorldConsistencyEngine | None = None) -> FastAPI:
+class ConsistencyMicroBatcher:
+    """Coalesce concurrent HTTP requests into bounded engine batches."""
+
+    def __init__(
+        self,
+        engine: TextWorldConsistencyEngine,
+        batch_wait_ms: float,
+        max_batch_size: int,
+    ) -> None:
+        if batch_wait_ms <= 0:
+            raise ValueError("batch_wait_ms must be positive")
+        if max_batch_size < 1:
+            raise ValueError("max_batch_size must be positive")
+        self.engine = engine
+        self.batch_wait_seconds = batch_wait_ms / 1000.0
+        self.max_batch_size = max_batch_size
+        self._pending: list[tuple[dict[str, Any], asyncio.Future]] = []
+        self._lock = asyncio.Lock()
+        self._runner: asyncio.Task | None = None
+
+    async def submit(self, request: dict[str, Any]) -> dict[str, Any]:
+        loop = asyncio.get_running_loop()
+        future = loop.create_future()
+        async with self._lock:
+            self._pending.append((request, future))
+            if self._runner is None or self._runner.done():
+                self._runner = asyncio.create_task(self._drain())
+        return await future
+
+    async def _drain(self) -> None:
+        await asyncio.sleep(self.batch_wait_seconds)
+        while True:
+            async with self._lock:
+                batch = self._pending[: self.max_batch_size]
+                del self._pending[: self.max_batch_size]
+                if not batch:
+                    self._runner = None
+                    return
+            await self._score_batch(batch)
+            async with self._lock:
+                if not self._pending:
+                    self._runner = None
+                    return
+
+    async def _score_batch(
+        self, batch: list[tuple[dict[str, Any], asyncio.Future]]
+    ) -> None:
+        requests = [request for request, _ in batch]
+        try:
+            results = await asyncio.to_thread(self.engine.score_batch, requests)
+            if len(results) != len(batch):
+                raise RuntimeError("consistency engine returned the wrong batch size")
+        except ValueError:
+            await self._score_individually(batch)
+            return
+        except Exception as error:
+            for _, future in batch:
+                if not future.done():
+                    future.set_exception(error)
+            return
+        for result, (_, future) in zip(results, batch, strict=True):
+            if not future.done():
+                future.set_result(result)
+
+    async def _score_individually(
+        self, batch: list[tuple[dict[str, Any], asyncio.Future]]
+    ) -> None:
+        for request, future in batch:
+            if future.done():
+                continue
+            try:
+                result = await asyncio.to_thread(self.engine.score, **request)
+            except Exception as error:
+                future.set_exception(error)
+            else:
+                future.set_result(result)
+
+
+def create_app(
+    engine: TextWorldConsistencyEngine | None = None,
+    batch_wait_ms: float = 0.0,
+    max_batch_size: int = 32,
+) -> FastAPI:
     """Create an app around an injected ready scorer engine."""
+    if batch_wait_ms < 0:
+        raise ValueError("batch_wait_ms must be non-negative")
+    if max_batch_size < 1:
+        raise ValueError("max_batch_size must be positive")
     app = FastAPI(title="TextWorld Actor Consistency Scorer")
     app.state.engine = engine
+    app.state.batch_wait_ms = batch_wait_ms
+    app.state.max_batch_size = max_batch_size
+    app.state.batcher = (
+        ConsistencyMicroBatcher(engine, batch_wait_ms, max_batch_size)
+        if engine is not None and batch_wait_ms > 0
+        else None
+    )
 
     def ready_engine() -> TextWorldConsistencyEngine:
         current = app.state.engine
@@ -49,6 +142,8 @@ def create_app(engine: TextWorldConsistencyEngine | None = None) -> FastAPI:
             "device": str(current.device),
             "dtype": current.dtype,
             "top_k": current.top_k,
+            "batch_wait_ms": app.state.batch_wait_ms,
+            "max_batch_size": app.state.max_batch_size,
         }
 
     @app.get("/v1/models")
@@ -77,14 +172,19 @@ def create_app(engine: TextWorldConsistencyEngine | None = None) -> FastAPI:
                     f"server top_k={current.top_k}"
                 ),
             )
+        request_kwargs = {
+            "history": [message.model_dump() for message in request.history],
+            "real_observation": request.real_observation,
+            "predicted_observation": request.predicted_observation,
+            "expert_action": request.expert_action,
+            "reward_metric": request.reward_metric,
+        }
         try:
+            if app.state.batcher is not None:
+                return await app.state.batcher.submit(request_kwargs)
             return await asyncio.to_thread(
                 current.score,
-                history=[message.model_dump() for message in request.history],
-                real_observation=request.real_observation,
-                predicted_observation=request.predicted_observation,
-                expert_action=request.expert_action,
-                reward_metric=request.reward_metric,
+                **request_kwargs,
             )
         except ValueError as error:
             raise HTTPException(status_code=422, detail=str(error)) from error
@@ -128,17 +228,31 @@ def main() -> int:
     parser.add_argument("--host", default="0.0.0.0")
     parser.add_argument("--port", type=int, default=8002)
     parser.add_argument("--top-k", type=int, default=64)
+    parser.add_argument("--batch-wait-ms", type=float, default=5.0)
+    parser.add_argument("--max-batch-size", type=int, default=32)
     args = parser.parse_args()
     if args.port < 1 or args.port > 65535:
         parser.error("--port must be between 1 and 65535")
     if args.top_k < 1:
         parser.error("--top-k must be positive")
+    if args.batch_wait_ms < 0:
+        parser.error("--batch-wait-ms must be non-negative")
+    if args.max_batch_size < 1:
+        parser.error("--max-batch-size must be positive")
     if not Path(args.model).exists():
         parser.error(f"local model path not found: {args.model}")
 
     import uvicorn
 
-    uvicorn.run(create_app(load_engine(args.model, args.top_k)), host=args.host, port=args.port)
+    uvicorn.run(
+        create_app(
+            load_engine(args.model, args.top_k),
+            batch_wait_ms=args.batch_wait_ms,
+            max_batch_size=args.max_batch_size,
+        ),
+        host=args.host,
+        port=args.port,
+    )
     return 0
 
 

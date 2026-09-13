@@ -22,6 +22,7 @@ class RecordingModel:
 
     def __init__(self):
         self.call_count = 0
+        self.batch_sizes = []
         self.last_batch_size = None
         self.last_attention_mask = None
         self.last_position_ids = None
@@ -41,6 +42,7 @@ class RecordingModel:
     ):
         self.call_count += 1
         self.last_batch_size = input_ids.shape[0]
+        self.batch_sizes.append(input_ids.shape[0])
         self.last_attention_mask = attention_mask
         self.last_position_ids = position_ids
         if torch.is_grad_enabled():
@@ -55,6 +57,180 @@ class RecordingModel:
 
 
 class TextWorldConsistencyEngineTests(unittest.TestCase):
+    def test_score_batch_reuses_one_real_forward_for_a_grpo_group(self):
+        model = RecordingModel()
+        engine = TextWorldConsistencyEngine(
+            model=model,
+            tokenizer=CharacterTokenizer(),
+            model_name="fake-actor",
+            top_k=2,
+        )
+        requests = [
+            {
+                "history": [{"role": "system", "content": "initial"}],
+                "real_observation": "predicted room x",
+                "predicted_observation": f"predicted room {index}",
+                "expert_action": "go east",
+                "reward_metric": (
+                    "full_vocab_js" if index % 2 else "union_topk_other_js"
+                ),
+            }
+            for index in range(4)
+        ]
+
+        results = engine.score_batch(requests)
+
+        self.assertEqual(model.call_count, 1)
+        self.assertEqual(model.batch_sizes, [5])
+        self.assertEqual(len(results), 4)
+        self.assertEqual(
+            [result["reward_metric"] for result in results],
+            [request["reward_metric"] for request in requests],
+        )
+
+    def test_score_batch_deduplicates_real_inputs_before_length_bucketing(self):
+        model = RecordingModel()
+        engine = TextWorldConsistencyEngine(
+            model=model,
+            tokenizer=CharacterTokenizer(),
+            model_name="fake-actor",
+            top_k=2,
+        )
+        requests = []
+        for real_observation in ("first real room", "second real room"):
+            for index in range(2):
+                requests.append(
+                    {
+                        "history": [],
+                        "real_observation": real_observation,
+                        "predicted_observation": f"prediction {index}",
+                        "expert_action": "look",
+                        "reward_metric": "full_vocab_js",
+                    }
+                )
+
+        results = engine.score_batch(requests)
+
+        self.assertEqual(len(results), 4)
+        self.assertEqual(model.call_count, 3)
+        self.assertEqual(sorted(model.batch_sizes), [1, 1, 4])
+        self.assertEqual(sum(model.batch_sizes), 6)
+
+    def test_score_batch_combines_equal_lengths_across_distinct_real_inputs(self):
+        model = RecordingModel()
+        engine = TextWorldConsistencyEngine(
+            model=model,
+            tokenizer=CharacterTokenizer(),
+            model_name="fake-actor",
+            top_k=2,
+        )
+        requests = []
+        for real_observation in ("room A", "room B"):
+            for predicted_observation in ("room C", "room D"):
+                requests.append(
+                    {
+                        "history": [],
+                        "real_observation": real_observation,
+                        "predicted_observation": predicted_observation,
+                        "expert_action": "look",
+                        "reward_metric": "full_vocab_js",
+                    }
+                )
+
+        results = engine.score_batch(requests)
+
+        self.assertEqual(len(results), 4)
+        self.assertEqual(model.call_count, 1)
+        self.assertEqual(model.batch_sizes, [6])
+
+    def test_score_batch_never_pads_unequal_length_sequences(self):
+        class PaddingRejectingModel(RecordingModel):
+            def __call__(self, input_ids, attention_mask, **kwargs):
+                if not torch.all(attention_mask == 1):
+                    raise AssertionError("batched actor inputs must not be padded")
+                return super().__call__(
+                    input_ids=input_ids,
+                    attention_mask=attention_mask,
+                    **kwargs,
+                )
+
+        model = PaddingRejectingModel()
+        engine = TextWorldConsistencyEngine(
+            model=model,
+            tokenizer=CharacterTokenizer(),
+            model_name="padding-rejecting",
+            top_k=2,
+        )
+        requests = [
+            {
+                "history": [],
+                "real_observation": "real",
+                "predicted_observation": prediction,
+                "expert_action": "look",
+                "reward_metric": "full_vocab_js",
+            }
+            for prediction in ("short", "a much longer prediction")
+        ]
+
+        results = engine.score_batch(requests)
+
+        self.assertEqual(len(results), 2)
+        self.assertEqual(sum(model.batch_sizes), 3)
+
+    def test_score_batch_matches_legacy_scores_for_padding_invariant_model(self):
+        class CausalPaddingInvariantModel(RecordingModel):
+            def __call__(
+                self,
+                input_ids,
+                attention_mask,
+                position_ids=None,
+                use_cache=False,
+                logits_to_keep=None,
+            ):
+                self.call_count += 1
+                self.last_batch_size = input_ids.shape[0]
+                self.batch_sizes.append(input_ids.shape[0])
+                masked_ids = input_ids * attention_mask
+                prefix_sums = masked_ids.cumsum(dim=-1)
+                batch, length = input_ids.shape
+                logits = torch.zeros(batch, length, 256)
+                indices = (prefix_sums % 256).unsqueeze(-1)
+                logits.scatter_(-1, indices, 2.0)
+                if logits_to_keep is not None:
+                    logits = logits[:, -logits_to_keep:, :]
+                return SimpleNamespace(logits=logits)
+
+        requests = [
+            {
+                "history": [{"role": "system", "content": "initial"}],
+                "real_observation": "same real room",
+                "predicted_observation": prediction,
+                "expert_action": "go east",
+                "reward_metric": "union_topk_other_js",
+            }
+            for prediction in ("short", "a much longer predicted room")
+        ]
+        legacy_engine = TextWorldConsistencyEngine(
+            CausalPaddingInvariantModel(), CharacterTokenizer(), "fake-actor", top_k=2
+        )
+        batch_engine = TextWorldConsistencyEngine(
+            CausalPaddingInvariantModel(), CharacterTokenizer(), "fake-actor", top_k=2
+        )
+
+        expected = [legacy_engine.score(**request) for request in requests]
+        actual = batch_engine.score_batch(requests)
+
+        for expected_row, actual_row in zip(expected, actual, strict=True):
+            for metric in (
+                "score",
+                "full_vocab_kl_real_to_candidate",
+                "full_vocab_js",
+                "top2_union_other_js",
+            ):
+                self.assertAlmostEqual(
+                    actual_row[metric], expected_row[metric], places=7
+                )
+
     def test_scores_real_and_predicted_observations_with_unpadded_forwards(self):
         model = RecordingModel()
         engine = TextWorldConsistencyEngine(

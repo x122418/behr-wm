@@ -375,6 +375,18 @@ bash scripts/servers/start_textworld_consistency_server.sh \
 curl --noproxy '*' -fsS http://127.0.0.1:8002/health
 ```
 
+The consistency server defaults to a 5 ms request-coalescing window and a
+maximum microbatch of 32 requests. Concurrent GRPO samples with identical
+history, real observation, and expert action are grouped so the frozen actor
+computes the real branch once. Real and predicted actor inputs are then batched
+only when their token lengths are exactly equal; the engine never pads a batch,
+because changing the padded sequence length causes material BF16/SDPA drift on
+the frozen Qwen3 actor. This does not change the reward definition. Set
+`--batch-wait-ms 0` to restore the legacy unbatched path. Before a formal run
+with a new actor/runtime, compare the batched and legacy paths on locked
+examples and require a maximum absolute metric difference of `1e-6` with
+identical within-group reward ordering.
+
 Inspect the complete resolved command without creating output:
 
 ```bash
