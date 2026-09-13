@@ -41,6 +41,7 @@ class TextWorldFormalLauncherTests(unittest.TestCase):
                     "actor_rollout_ref.actor.data_loader_seed=42",
                     "actor_rollout_ref.rollout.n=4",
                     "actor_rollout_ref.rollout.temperature=0.7",
+                    "data.filter_overlong_prompts=False",
                     "trainer.total_training_steps=2000",
                     "trainer.test_freq=250",
                     "trainer.save_freq=1000",

@@ -351,6 +351,12 @@ another data disk. Ray runtime files and any object-store spill are similarly
 kept under `/DATA/disk1/huangjiaqi_cache/lwm_ray` through the launcher's
 `RAY_TEMP_DIR` setting.
 
+The formal launcher sets `data.filter_overlong_prompts=False` because the
+frozen task-disjoint data was already exhaustively token-audited with the same
+world-model tokenizer: all 570,010 training prompts are at most 2,822 tokens
+and all validation prompts are at most 3,008 tokens, below the 4,096-token
+limit. Legacy smoke/pilot launchers retain runtime filtering by default.
+
 For BehR, start the reference completion server on the scorer GPU:
 
 ```bash

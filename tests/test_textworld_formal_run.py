@@ -1,5 +1,7 @@
 import json
 from pathlib import Path
+import subprocess
+import sys
 import tempfile
 import unittest
 
@@ -31,6 +33,63 @@ def manifest(**overrides):
 
 
 class TextWorldFormalRunTests(unittest.TestCase):
+    def test_cli_records_disabled_overlong_filter_in_manifest(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            output_dir = Path(tmpdir) / "run"
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    "src/training/textworld_formal_run.py",
+                    "--new-run",
+                    "--output-dir",
+                    str(output_dir),
+                    "--arm",
+                    "behr",
+                    "--reward-mode",
+                    "cauchy",
+                    "--sft-loss-coef",
+                    "0.0",
+                    "--train-data",
+                    "/data/train.parquet",
+                    "--val-data",
+                    "/data/val.parquet",
+                    "--world-model",
+                    "/models/world",
+                    "--actor-model",
+                    "/models/actor",
+                    "--scorer-url",
+                    "http://127.0.0.1:8000",
+                    "--seed",
+                    "42",
+                    "--actor-data-loader-seed",
+                    "42",
+                    "--group-size",
+                    "4",
+                    "--rollout-temperature",
+                    "0.7",
+                    "--total-steps",
+                    "2000",
+                    "--save-freq",
+                    "1000",
+                    "--val-freq",
+                    "250",
+                    "--max-actor-ckpt-to-keep",
+                    "1",
+                    "--no-filter-overlong-prompts",
+                ],
+                cwd=Path(__file__).resolve().parents[1],
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            actual = json.loads(
+                (output_dir / "formal_run_manifest.json").read_text(encoding="utf-8")
+            )
+            self.assertEqual(actual["schema_version"], 2)
+            self.assertIs(actual["filter_overlong_prompts"], False)
+
     def test_new_run_writes_canonical_manifest(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             output_dir = Path(tmpdir) / "run"

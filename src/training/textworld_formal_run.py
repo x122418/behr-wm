@@ -69,13 +69,18 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--save-freq", type=int, required=True)
     parser.add_argument("--val-freq", type=int, required=True)
     parser.add_argument("--max-actor-ckpt-to-keep", type=int, required=True)
+    parser.add_argument(
+        "--filter-overlong-prompts",
+        action=argparse.BooleanOptionalAction,
+        required=True,
+    )
     return parser.parse_args()
 
 
 def main() -> int:
     args = _parse_args()
     manifest = {
-        "schema_version": 1,
+        "schema_version": 2,
         "arm": args.arm,
         "reward_mode": args.reward_mode,
         "sft_loss_coef": args.sft_loss_coef,
@@ -92,6 +97,7 @@ def main() -> int:
         "save_freq": args.save_freq,
         "val_freq": args.val_freq,
         "max_actor_ckpt_to_keep": args.max_actor_ckpt_to_keep,
+        "filter_overlong_prompts": args.filter_overlong_prompts,
     }
     try:
         path = prepare_run(args.output_dir, manifest, resume=args.resume)

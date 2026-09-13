@@ -19,6 +19,7 @@ class TextWorldSmokeLauncherTests(unittest.TestCase):
                 "MAX_ACTOR_CKPT_TO_KEEP": "1",
                 "RESUME_MODE": "disable",
                 "RAY_TEMP_DIR": "/DATA/disk1/test-ray-temp",
+                "FILTER_OVERLONG_PROMPTS": "False",
             }
         )
 
@@ -38,6 +39,7 @@ class TextWorldSmokeLauncherTests(unittest.TestCase):
             "trainer.max_actor_ckpt_to_keep=1",
             "trainer.resume_mode=disable",
             "++ray_kwargs.ray_init._temp_dir=/DATA/disk1/test-ray-temp",
+            "data.filter_overlong_prompts=False",
         ):
             self.assertIn(expected, result.stdout)
 

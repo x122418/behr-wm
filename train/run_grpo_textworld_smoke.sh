@@ -42,9 +42,14 @@ ACTOR_DATA_LOADER_SEED="${ACTOR_DATA_LOADER_SEED:-}"
 MAX_ACTOR_CKPT_TO_KEEP="${MAX_ACTOR_CKPT_TO_KEEP:-}"
 RESUME_MODE="${RESUME_MODE:-}"
 RAY_TEMP_DIR="${RAY_TEMP_DIR:-}"
+FILTER_OVERLONG_PROMPTS="${FILTER_OVERLONG_PROMPTS:-True}"
 case "${RESUME_MODE}" in
     ""|auto|disable|resume_path) ;;
     *) echo "ERROR: unsupported RESUME_MODE: ${RESUME_MODE}" >&2; exit 2 ;;
+esac
+case "${FILTER_OVERLONG_PROMPTS}" in
+    True|False) ;;
+    *) echo "ERROR: FILTER_OVERLONG_PROMPTS must be True or False" >&2; exit 2 ;;
 esac
 TOTAL_STEPS="${TOTAL_STEPS:-2}"
 SAVE_FREQ="${SAVE_FREQ:--1}"
@@ -60,7 +65,7 @@ COMMAND=(
     data.train_batch_size=4
     data.max_prompt_length=4096
     data.max_response_length=512
-    data.filter_overlong_prompts=True
+    "data.filter_overlong_prompts=${FILTER_OVERLONG_PROMPTS}"
     data.truncation=left
     "actor_rollout_ref.model.path=${WORLD_MODEL}"
     actor_rollout_ref.actor.optim.lr=5e-6

@@ -72,6 +72,12 @@ VAL_FREQ="${VAL_FREQ:-250}"
 MAX_ACTOR_CKPT_TO_KEEP="${MAX_ACTOR_CKPT_TO_KEEP:-1}"
 HF_DATASETS_CACHE="${HF_DATASETS_CACHE:-/DATA/disk1/huangjiaqi_cache/lwm_hf_datasets}"
 RAY_TEMP_DIR="${RAY_TEMP_DIR:-/DATA/disk1/huangjiaqi_cache/lwm_ray}"
+FILTER_OVERLONG_PROMPTS="${FILTER_OVERLONG_PROMPTS:-False}"
+case "${FILTER_OVERLONG_PROMPTS}" in
+    True) FILTER_OVERLONG_FLAG=(--filter-overlong-prompts) ;;
+    False) FILTER_OVERLONG_FLAG=(--no-filter-overlong-prompts) ;;
+    *) echo "ERROR: FILTER_OVERLONG_PROMPTS must be True or False" >&2; exit 2 ;;
+esac
 OUTPUT_DIR="${OUTPUT_DIR:-${PROJECT_ROOT}/outputs/checkpoints/textworld_formal_${FORMAL_ARM}_steps${TOTAL_STEPS}_seed${FORMAL_SEED}}"
 EXPERIMENT_NAME="${EXPERIMENT_NAME:-formal-${FORMAL_ARM}-textworld-steps${TOTAL_STEPS}-seed${FORMAL_SEED}}"
 
@@ -83,6 +89,7 @@ export ACTOR_DATA_LOADER_SEED="${FORMAL_SEED}"
 export MAX_ACTOR_CKPT_TO_KEEP RESUME_MODE
 export HF_DATASETS_CACHE
 export RAY_TEMP_DIR
+export FILTER_OVERLONG_PROMPTS
 
 echo "TextWorld formal experiment"
 echo "  Arm: ${FORMAL_ARM}"
@@ -124,7 +131,8 @@ if ! "$DRY_RUN"; then
         --total-steps "${TOTAL_STEPS}" \
         --save-freq "${SAVE_FREQ}" \
         --val-freq "${VAL_FREQ}" \
-        --max-actor-ckpt-to-keep "${MAX_ACTOR_CKPT_TO_KEEP}"
+        --max-actor-ckpt-to-keep "${MAX_ACTOR_CKPT_TO_KEEP}" \
+        "${FILTER_OVERLONG_FLAG[@]}"
 fi
 
 if "$DRY_RUN"; then
