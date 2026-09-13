@@ -3,10 +3,12 @@ import unittest
 import torch
 
 from src.training.textworld_sft_aux import (
+    attach_aux_sft_batch,
     build_aux_sft_batch,
     combine_actor_losses,
     token_mean_nll,
 )
+from tensordict import TensorDict
 
 
 class FakeTokenizer:
@@ -23,6 +25,21 @@ class FakeTokenizer:
 
 
 class TextWorldSFTAuxTests(unittest.TestCase):
+    def test_attach_aux_sft_batch_does_not_mutate_locked_input(self):
+        batch = TensorDict(
+            {"input_ids": torch.tensor([[1, 2]])}, batch_size=[1]
+        ).lock_()
+        result = attach_aux_sft_batch(
+            batch, {"input_ids": torch.tensor([[3, 4]])}
+        )
+
+        self.assertTrue(batch.is_locked)
+        self.assertNotIn("sft_input_ids", batch.keys())
+        self.assertFalse(result.is_locked)
+        torch.testing.assert_close(
+            result["sft_input_ids"], torch.tensor([[3, 4]])
+        )
+
     def test_build_aux_sft_batch_masks_prompt_and_target_padding(self):
         result = build_aux_sft_batch(
             prompts=torch.tensor([[0, 7, 8], [5, 6, 7]]),

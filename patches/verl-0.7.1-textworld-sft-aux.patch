@@ -33,11 +33,12 @@
          if self._is_rollout:
 --- a/verl/workers/actor/dp_actor.py
 +++ b/verl/workers/actor/dp_actor.py
-@@ -40,6 +40,12 @@
+@@ -40,6 +40,13 @@
  from verl.workers.actor import BasePPOActor
  from verl.workers.config import ActorConfig
  
 +from src.training.textworld_sft_aux import (
++    attach_aux_sft_batch,
 +    build_aux_sft_batch,
 +    combine_actor_losses,
 +    token_mean_nll,
@@ -46,7 +47,7 @@
  __all__ = ["DataParallelPPOActor"]
  
  logger = logging.getLogger(__file__)
-@@ -55,11 +61,18 @@
+@@ -55,11 +62,18 @@
          actor_optimizer (torch.optim.Optimizer, optional): Actor optimizer. Defaults to None.
      """
  
@@ -66,7 +67,7 @@
          role = "Ref" if actor_optimizer is None else "Actor"
  
          self.use_remove_padding = self.config.get("use_remove_padding", False)
-@@ -512,6 +525,24 @@
+@@ -512,6 +526,23 @@
  
          temperature = data.meta_info["temperature"]  # temperature must be in the data.meta_info to avoid silent error
          pad_token_id = data.meta_info.get("pad_token_id", 0)
@@ -86,8 +87,7 @@
 +                tokenizer=self.tokenizer,
 +                max_response_length=data.batch["responses"].shape[-1],
 +            )
-+            for key, value in sft_batch.items():
-+                data.batch[f"sft_{key}"] = value
++            data.batch = attach_aux_sft_batch(data.batch, sft_batch)
  
          select_keys = [
              "responses",

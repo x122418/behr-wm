@@ -10,6 +10,14 @@ import torch
 from verl.utils.model import compute_position_id_with_mask
 
 
+def attach_aux_sft_batch(batch: Any, sft_batch: dict[str, torch.Tensor]) -> Any:
+    """Return an unlocked batch copy containing namespaced SFT tensors."""
+    result = batch.clone()
+    for key, value in sft_batch.items():
+        result[f"sft_{key}"] = value
+    return result
+
+
 def _encode_target(
     tokenizer: Any, ground_truth: str, max_response_length: int
 ) -> list[int]:

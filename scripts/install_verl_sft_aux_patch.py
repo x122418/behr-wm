@@ -22,7 +22,7 @@ TARGETS = (
 PATCHED_MARKERS = {
     TARGETS[0]: "sft_loss_coef: float = 0.0",
     TARGETS[1]: "tokenizer=self.tokenizer",
-    TARGETS[2]: 'metrics["actor/sft_loss"]',
+    TARGETS[2]: "data.batch = attach_aux_sft_batch(data.batch, sft_batch)",
 }
 
 
