@@ -347,7 +347,9 @@ The formal launcher also exports `HF_DATASETS_CACHE` to
 `/DATA/disk1/huangjiaqi_cache/lwm_hf_datasets` by default. This keeps the
 expanded Arrow cache off the nearly full system disk and lets all three arms
 reuse one cache. Set `HF_DATASETS_CACHE` explicitly only when moving the run to
-another data disk.
+another data disk. Ray runtime files and any object-store spill are similarly
+kept under `/DATA/disk1/huangjiaqi_cache/lwm_ray` through the launcher's
+`RAY_TEMP_DIR` setting.
 
 For BehR, start the reference completion server on the scorer GPU:
 

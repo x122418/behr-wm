@@ -18,6 +18,7 @@ class TextWorldSmokeLauncherTests(unittest.TestCase):
                 "ACTOR_DATA_LOADER_SEED": "42",
                 "MAX_ACTOR_CKPT_TO_KEEP": "1",
                 "RESUME_MODE": "disable",
+                "RAY_TEMP_DIR": "/DATA/disk1/test-ray-temp",
             }
         )
 
@@ -36,6 +37,7 @@ class TextWorldSmokeLauncherTests(unittest.TestCase):
             "actor_rollout_ref.actor.data_loader_seed=42",
             "trainer.max_actor_ckpt_to_keep=1",
             "trainer.resume_mode=disable",
+            "++ray_kwargs.ray_init._temp_dir=/DATA/disk1/test-ray-temp",
         ):
             self.assertIn(expected, result.stdout)
 
@@ -46,6 +48,7 @@ class TextWorldSmokeLauncherTests(unittest.TestCase):
             "ACTOR_DATA_LOADER_SEED",
             "MAX_ACTOR_CKPT_TO_KEEP",
             "RESUME_MODE",
+            "RAY_TEMP_DIR",
         ):
             env.pop(key, None)
 
@@ -63,6 +66,7 @@ class TextWorldSmokeLauncherTests(unittest.TestCase):
         self.assertNotIn("actor_rollout_ref.actor.data_loader_seed=", result.stdout)
         self.assertNotIn("trainer.max_actor_ckpt_to_keep=", result.stdout)
         self.assertNotIn("trainer.resume_mode=", result.stdout)
+        self.assertNotIn("ray_kwargs.ray_init._temp_dir=", result.stdout)
 
     def test_invalid_resume_mode_fails_before_creating_output(self):
         with tempfile.TemporaryDirectory() as tmpdir:

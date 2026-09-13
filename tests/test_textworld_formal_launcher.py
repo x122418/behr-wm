@@ -89,16 +89,23 @@ class TextWorldFormalLauncherTests(unittest.TestCase):
         self.assertIn("textworld_formal_run.py", launcher)
         self.assertIn('PREFLIGHT_MODE=(--resume)', launcher)
 
-    def test_formal_run_reports_explicit_dataset_cache_on_data_disk(self):
+    def test_formal_run_reports_explicit_runtime_storage_on_data_disk(self):
         cache_path = "/DATA/disk1/test-cache-for-formal-launcher"
+        ray_temp_path = "/DATA/disk1/test-ray-temp-for-formal-launcher"
 
         result = self.dry_run(
             "union_js_sft",
             HF_DATASETS_CACHE=cache_path,
+            RAY_TEMP_DIR=ray_temp_path,
         )
 
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn(f"HF datasets cache: {cache_path}", result.stdout)
+        self.assertIn(f"Ray temp directory: {ray_temp_path}", result.stdout)
+        self.assertIn(
+            f"++ray_kwargs.ray_init._temp_dir={ray_temp_path}",
+            result.stdout,
+        )
 
 
 if __name__ == "__main__":

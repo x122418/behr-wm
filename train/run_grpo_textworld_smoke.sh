@@ -41,6 +41,7 @@ DATA_SEED="${DATA_SEED:-}"
 ACTOR_DATA_LOADER_SEED="${ACTOR_DATA_LOADER_SEED:-}"
 MAX_ACTOR_CKPT_TO_KEEP="${MAX_ACTOR_CKPT_TO_KEEP:-}"
 RESUME_MODE="${RESUME_MODE:-}"
+RAY_TEMP_DIR="${RAY_TEMP_DIR:-}"
 case "${RESUME_MODE}" in
     ""|auto|disable|resume_path) ;;
     *) echo "ERROR: unsupported RESUME_MODE: ${RESUME_MODE}" >&2; exit 2 ;;
@@ -118,6 +119,9 @@ if [[ -n "${MAX_ACTOR_CKPT_TO_KEEP}" ]]; then
 fi
 if [[ -n "${RESUME_MODE}" ]]; then
     COMMAND+=("trainer.resume_mode=${RESUME_MODE}")
+fi
+if [[ -n "${RAY_TEMP_DIR}" ]]; then
+    COMMAND+=("++ray_kwargs.ray_init._temp_dir=${RAY_TEMP_DIR}")
 fi
 echo "TextWorld BehR GRPO smoke configuration"
 echo "  GPUs: ${GPU_IDS} (${N_GPUS})"

@@ -71,6 +71,7 @@ SAVE_FREQ="${SAVE_FREQ:-1000}"
 VAL_FREQ="${VAL_FREQ:-250}"
 MAX_ACTOR_CKPT_TO_KEEP="${MAX_ACTOR_CKPT_TO_KEEP:-1}"
 HF_DATASETS_CACHE="${HF_DATASETS_CACHE:-/DATA/disk1/huangjiaqi_cache/lwm_hf_datasets}"
+RAY_TEMP_DIR="${RAY_TEMP_DIR:-/DATA/disk1/huangjiaqi_cache/lwm_ray}"
 OUTPUT_DIR="${OUTPUT_DIR:-${PROJECT_ROOT}/outputs/checkpoints/textworld_formal_${FORMAL_ARM}_steps${TOTAL_STEPS}_seed${FORMAL_SEED}}"
 EXPERIMENT_NAME="${EXPERIMENT_NAME:-formal-${FORMAL_ARM}-textworld-steps${TOTAL_STEPS}-seed${FORMAL_SEED}}"
 
@@ -81,6 +82,7 @@ export DATA_SEED="${FORMAL_SEED}"
 export ACTOR_DATA_LOADER_SEED="${FORMAL_SEED}"
 export MAX_ACTOR_CKPT_TO_KEEP RESUME_MODE
 export HF_DATASETS_CACHE
+export RAY_TEMP_DIR
 
 echo "TextWorld formal experiment"
 echo "  Arm: ${FORMAL_ARM}"
@@ -90,12 +92,14 @@ echo "  Auxiliary SFT coefficient: ${SFT_LOSS_COEF}"
 echo "  Output: ${OUTPUT_DIR}"
 echo "  Resume: ${FORMAL_RESUME}"
 echo "  HF datasets cache: ${HF_DATASETS_CACHE}"
+echo "  Ray temp directory: ${RAY_TEMP_DIR}"
 
 if ! "$DRY_RUN"; then
     for path in "${TRAIN_DATA}" "${VAL_DATA}" "${WORLD_MODEL}" "${ACTOR_MODEL}"; do
         [[ -e "${path}" ]] || { echo "ERROR: required path not found: ${path}" >&2; exit 1; }
     done
     mkdir -p "${HF_DATASETS_CACHE}"
+    mkdir -p "${RAY_TEMP_DIR}"
     curl --noproxy 127.0.0.1,localhost -fsS --connect-timeout 10 \
         "${SCORER_URL}/health" >/dev/null || {
         echo "ERROR: reward scorer is not healthy at ${SCORER_URL}" >&2
