@@ -80,6 +80,14 @@ case "${FILTER_OVERLONG_PROMPTS}" in
 esac
 OUTPUT_DIR="${OUTPUT_DIR:-${PROJECT_ROOT}/outputs/checkpoints/textworld_formal_${FORMAL_ARM}_steps${TOTAL_STEPS}_seed${FORMAL_SEED}}"
 EXPERIMENT_NAME="${EXPERIMENT_NAME:-formal-${FORMAL_ARM}-textworld-steps${TOTAL_STEPS}-seed${FORMAL_SEED}}"
+if [[ -n "${CUMEM_RUNTIME_GUARD:-}" ]]; then
+    CUMEM_GUARD_COMMAND=("${CUMEM_RUNTIME_GUARD}")
+else
+    CUMEM_GUARD_COMMAND=(
+        "${PROJECT_ROOT}/.venv/bin/python"
+        "${PROJECT_ROOT}/scripts/env_setup/check_vllm_cumem_runtime.py"
+    )
+fi
 
 export TRAIN_DATA VAL_DATA WORLD_MODEL REWARD_MODE SFT_LOSS_COEF
 export GROUP_SIZE ROLLOUT_TEMPERATURE TOTAL_STEPS SAVE_FREQ VAL_FREQ
@@ -102,6 +110,13 @@ echo "  HF datasets cache: ${HF_DATASETS_CACHE}"
 echo "  Ray temp directory: ${RAY_TEMP_DIR}"
 
 if ! "$DRY_RUN"; then
+    if "${CUMEM_GUARD_COMMAND[@]}"; then
+        :
+    else
+        guard_status=$?
+        echo "ERROR: vLLM CuMem runtime guard failed" >&2
+        exit "${guard_status}"
+    fi
     for path in "${TRAIN_DATA}" "${VAL_DATA}" "${WORLD_MODEL}" "${ACTOR_MODEL}"; do
         [[ -e "${path}" ]] || { echo "ERROR: required path not found: ${path}" >&2; exit 1; }
     done

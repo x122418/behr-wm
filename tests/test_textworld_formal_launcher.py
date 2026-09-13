@@ -108,6 +108,33 @@ class TextWorldFormalLauncherTests(unittest.TestCase):
             result.stdout,
         )
 
+    def test_real_run_stops_when_cumem_runtime_guard_fails(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmpdir_path = Path(tmpdir)
+            output_dir = tmpdir_path / "output"
+            guard = tmpdir_path / "failing-cumem-guard"
+            guard.write_text("#!/usr/bin/env bash\nexit 42\n", encoding="utf-8")
+            guard.chmod(0o755)
+            env = {
+                **os.environ,
+                "FORMAL_ARM": "behr",
+                "OUTPUT_DIR": str(output_dir),
+                "CUMEM_RUNTIME_GUARD": str(guard),
+            }
+
+            result = subprocess.run(
+                ["bash", str(LAUNCHER)],
+                cwd=PROJECT_ROOT,
+                env=env,
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+
+            self.assertEqual(result.returncode, 42)
+            self.assertIn("vLLM CuMem runtime guard failed", result.stderr)
+            self.assertFalse(output_dir.exists())
+
 
 if __name__ == "__main__":
     unittest.main()
