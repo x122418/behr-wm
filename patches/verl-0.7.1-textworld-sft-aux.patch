@@ -1,0 +1,161 @@
+--- a/verl/workers/config/actor.py
++++ b/verl/workers/config/actor.py
+@@ -165,6 +165,7 @@
+     use_torch_compile: bool = True
+     kl_loss_coef: float = 0.001
+     kl_loss_type: str = "low_var_kl"
++    sft_loss_coef: float = 0.0
+     ppo_epochs: int = 1
+     shuffle: bool = False
+     data_loader_seed: int = 1
+@@ -208,6 +209,8 @@
+         ]
+         if self.loss_agg_mode not in valid_loss_agg_modes:
+             raise ValueError(f"Invalid loss_agg_mode: {self.loss_agg_mode}")
++        if self.sft_loss_coef < 0:
++            raise ValueError("sft_loss_coef must be nonnegative")
+ 
+     def validate(self, n_gpus: int, train_batch_size: int, model_config: dict = None):
+         """Validate actor configuration with runtime parameters."""
+--- a/verl/workers/fsdp_workers.py
++++ b/verl/workers/fsdp_workers.py
+@@ -921,7 +921,10 @@
+         if self._is_actor:
+             actor_cfg = omega_conf_to_dataclass(self.config.actor)
+             self.actor = DataParallelPPOActor(
+-                config=actor_cfg, actor_module=self.actor_module_fsdp, actor_optimizer=self.actor_optimizer
++                config=actor_cfg,
++                actor_module=self.actor_module_fsdp,
++                actor_optimizer=self.actor_optimizer,
++                tokenizer=self.tokenizer,
+             )
+ 
+         if self._is_rollout:
+--- a/verl/workers/actor/dp_actor.py
++++ b/verl/workers/actor/dp_actor.py
+@@ -40,6 +40,12 @@
+ from verl.workers.actor import BasePPOActor
+ from verl.workers.config import ActorConfig
+ 
++from src.training.textworld_sft_aux import (
++    build_aux_sft_batch,
++    combine_actor_losses,
++    token_mean_nll,
++)
++
+ __all__ = ["DataParallelPPOActor"]
+ 
+ logger = logging.getLogger(__file__)
+@@ -55,11 +61,18 @@
+         actor_optimizer (torch.optim.Optimizer, optional): Actor optimizer. Defaults to None.
+     """
+ 
+-    def __init__(self, config: ActorConfig, actor_module: nn.Module, actor_optimizer: torch.optim.Optimizer = None):
++    def __init__(
++        self,
++        config: ActorConfig,
++        actor_module: nn.Module,
++        actor_optimizer: torch.optim.Optimizer = None,
++        tokenizer=None,
++    ):
+         """When optimizer is None, it is Reference Policy"""
+         super().__init__(config)
+         self.actor_module = actor_module
+         self.actor_optimizer = actor_optimizer
++        self.tokenizer = tokenizer
+         role = "Ref" if actor_optimizer is None else "Actor"
+ 
+         self.use_remove_padding = self.config.get("use_remove_padding", False)
+@@ -512,6 +525,24 @@
+ 
+         temperature = data.meta_info["temperature"]  # temperature must be in the data.meta_info to avoid silent error
+         pad_token_id = data.meta_info.get("pad_token_id", 0)
++        sft_loss_coef = self.config.sft_loss_coef
++        if sft_loss_coef > 0:
++            if self.tokenizer is None:
++                raise RuntimeError("auxiliary SFT loss requires the actor tokenizer")
++            if self.use_dynamic_bsz:
++                raise NotImplementedError("auxiliary SFT loss does not support dynamic batching")
++            prompts = data.batch["prompts"]
++            prompt_attention_mask = data.batch["attention_mask"][:, : prompts.shape[-1]]
++            ground_truths = [item["ground_truth"] for item in data.non_tensor_batch["reward_model"]]
++            sft_batch = build_aux_sft_batch(
++                prompts=prompts,
++                prompt_attention_mask=prompt_attention_mask,
++                ground_truths=ground_truths,
++                tokenizer=self.tokenizer,
++                max_response_length=data.batch["responses"].shape[-1],
++            )
++            for key, value in sft_batch.items():
++                data.batch[f"sft_{key}"] = value
+ 
+         select_keys = [
+             "responses",
+@@ -524,6 +555,17 @@
+         ]
+         if self.use_prefix_grouper and "prompts" in data.batch.keys():
+             select_keys.append("prompts")
++        if sft_loss_coef > 0:
++            select_keys.extend(
++                [
++                    "sft_responses",
++                    "sft_response_mask",
++                    "sft_input_ids",
++                    "sft_attention_mask",
++                    "sft_position_ids",
++                    "sft_prompts",
++                ]
++            )
+         if self.config.use_kl_loss:
+             select_keys.append("ref_log_prob")
+         # Include pre-computed IS weights if present in batch
+@@ -552,6 +594,8 @@
+         metrics = {
+             "actor/pg_loss": 0.0,
+             "actor/kl_loss": 0.0,
++            "actor/sft_loss": 0.0,
++            "actor/total_loss": 0.0,
+         }
+         for _ in range(self.config.ppo_epochs):
+             for batch_idx, mini_batch in enumerate(mini_batches):
+@@ -656,6 +700,32 @@
+                         metrics["actor/kl_loss"] += kl_loss.detach().item() * loss_scale_factor
+                         micro_batch_metrics["actor/kl_coef"] = self.config.kl_loss_coef
+ 
++                    if sft_loss_coef > 0:
++                        sft_inputs = {
++                            key.removeprefix("sft_"): value
++                            for key, value in model_inputs.items()
++                            if key.startswith("sft_")
++                        }
++                        sft_inputs["pad_token_id"] = pad_token_id
++                        sft_outputs = self._forward_micro_batch(
++                            sft_inputs, temperature=1.0, calculate_entropy=False
++                        )
++                        sft_loss = token_mean_nll(
++                            sft_outputs["log_probs"], sft_inputs["response_mask"]
++                        )
++                        zero_kl = pg_loss.new_zeros(())
++                        effective_kl_loss = kl_loss if self.config.use_kl_loss else zero_kl
++                        policy_loss = combine_actor_losses(
++                            pg_loss=pg_loss,
++                            kl_loss=effective_kl_loss,
++                            kl_coef=self.config.kl_loss_coef if self.config.use_kl_loss else 0.0,
++                            sft_loss=sft_loss,
++                            sft_coef=sft_loss_coef,
++                        )
++                        if calculate_entropy and entropy is not None and entropy_coeff != 0:
++                            policy_loss -= entropy_agg * entropy_coeff
++                        metrics["actor/sft_loss"] += sft_loss.detach().item() * loss_scale_factor
++                        micro_batch_metrics["actor/sft_loss_coef"] = sft_loss_coef
+ 
+                     if self.config.use_dynamic_bsz:
+                         # relative to the dynamic bsz
+@@ -668,6 +738,7 @@
+                         loss.backward()
+ 
+                     metrics["actor/pg_loss"] += pg_loss.detach().item() * loss_scale_factor
++                    metrics["actor/total_loss"] += policy_loss.detach().item() * loss_scale_factor
+                     append_to_dict(metrics, micro_batch_metrics)
+ 
+                 grad_norm = self._optimizer_step()
