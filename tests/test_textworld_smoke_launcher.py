@@ -10,6 +10,22 @@ LAUNCHER = PROJECT_ROOT / "train" / "run_grpo_textworld_smoke.sh"
 
 
 class TextWorldSmokeLauncherTests(unittest.TestCase):
+    def test_dry_run_forwards_auxiliary_sft_coefficient(self):
+        env = os.environ.copy()
+        env["SFT_LOSS_COEF"] = "0.1"
+
+        result = subprocess.run(
+            ["bash", str(LAUNCHER), "--dry-run"],
+            cwd=PROJECT_ROOT,
+            env=env,
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("actor_rollout_ref.actor.sft_loss_coef=0.1", result.stdout)
+
     def test_local_reward_services_bypass_environment_proxies(self):
         launcher = LAUNCHER.read_text(encoding="utf-8")
 

@@ -50,6 +50,7 @@ class TextWorldPilotLauncherTests(unittest.TestCase):
                 "SAVE_FREQ": "3",
                 "VAL_FREQ": "4",
                 "GROUP_SIZE": "5",
+                "ROLLOUT_TEMPERATURE": "0.7",
                 "ROLLOUT_GPU_MEMORY_UTILIZATION": "0.25",
             }
         )
@@ -67,6 +68,7 @@ class TextWorldPilotLauncherTests(unittest.TestCase):
         self.assertIn("trainer.save_freq=3", result.stdout)
         self.assertIn("trainer.test_freq=4", result.stdout)
         self.assertIn("actor_rollout_ref.rollout.n=5", result.stdout)
+        self.assertIn("actor_rollout_ref.rollout.temperature=0.7", result.stdout)
         self.assertIn(
             "actor_rollout_ref.rollout.gpu_memory_utilization=0.25",
             result.stdout,

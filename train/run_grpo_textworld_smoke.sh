@@ -35,6 +35,8 @@ ROLLOUT_GPU_MEMORY_UTILIZATION="${ROLLOUT_GPU_MEMORY_UTILIZATION:-0.35}"
 OUTPUT_DIR="${OUTPUT_DIR:-${PROJECT_ROOT}/outputs/checkpoints/textworld_${REWARD_MODE}_smoke}"
 EXPERIMENT_NAME="${EXPERIMENT_NAME:-textworld-behr-smoke}"
 GROUP_SIZE="${GROUP_SIZE:-2}"
+ROLLOUT_TEMPERATURE="${ROLLOUT_TEMPERATURE:-1.3}"
+SFT_LOSS_COEF="${SFT_LOSS_COEF:-0.0}"
 TOTAL_STEPS="${TOTAL_STEPS:-2}"
 SAVE_FREQ="${SAVE_FREQ:--1}"
 VAL_FREQ="${VAL_FREQ:--1}"
@@ -57,6 +59,7 @@ COMMAND=(
     actor_rollout_ref.actor.ppo_micro_batch_size_per_gpu=1
     actor_rollout_ref.actor.use_kl_loss=True
     actor_rollout_ref.actor.kl_loss_coef=0.001
+    "++actor_rollout_ref.actor.sft_loss_coef=${SFT_LOSS_COEF}"
     actor_rollout_ref.actor.entropy_coeff=0
     ++actor_rollout_ref.actor.fsdp_config.model_dtype=bfloat16
     actor_rollout_ref.ref.log_prob_micro_batch_size_per_gpu=1
@@ -69,7 +72,7 @@ COMMAND=(
     actor_rollout_ref.rollout.max_model_len=4608
     actor_rollout_ref.rollout.enforce_eager=True
     "actor_rollout_ref.rollout.n=${GROUP_SIZE}"
-    actor_rollout_ref.rollout.temperature=1.3
+    "actor_rollout_ref.rollout.temperature=${ROLLOUT_TEMPERATURE}"
     actor_rollout_ref.rollout.top_p=1.0
     "custom_reward_function.path=${REWARD_FN_PATH}"
     custom_reward_function.name=compute_score
@@ -111,6 +114,11 @@ printf '  %s\n' "${COMMAND[@]}"
 if "$DRY_RUN"; then
     echo "Dry run only; no output directory was created and no training was started."
     exit 0
+fi
+
+if [[ "${SFT_LOSS_COEF}" != "0" && "${SFT_LOSS_COEF}" != "0.0" ]]; then
+    "${PROJECT_ROOT}/.venv/bin/python" \
+        "${PROJECT_ROOT}/scripts/install_verl_sft_aux_patch.py" --check
 fi
 
 for path in "$TRAIN_DATA" "$VAL_DATA" "$REWARD_FN_PATH" "$WORLD_MODEL" "${PROJECT_ROOT}/.venv/bin/python"; do

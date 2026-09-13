@@ -281,6 +281,46 @@ uses rollout reward metrics rather than a supervised cross-entropy
 `val_loss`. Report held-out reward/consistency and downstream EM or
 trajectory metrics separately.
 
+### Auxiliary SFT + Union-JS pilot
+
+The pinned VERL 0.7.1 PPO actor needs the repository-owned downstream patch
+before it can combine GRPO and teacher-forced real-observation SFT losses:
+
+```bash
+PYTHONPATH=. .venv/bin/python scripts/install_verl_sft_aux_patch.py --apply
+PYTHONPATH=. .venv/bin/python scripts/install_verl_sft_aux_patch.py --check
+```
+
+Start the frozen actor consistency scorer on a dedicated GPU:
+
+```bash
+bash scripts/servers/start_textworld_consistency_server.sh \
+  --model /DATA/disk1/huangjiaqi_data/qwen_model/Qwen3-8B \
+  --gpu 7 --port 8002 --top-k 64
+```
+
+Use two other GPUs for a two-step smoke:
+
+```bash
+CUDA_VISIBLE_DEVICES=5,6 N_GPUS=2 \
+REWARD_MODE=union_js SFT_LOSS_COEF=0.1 GROUP_SIZE=4 \
+ROLLOUT_TEMPERATURE=0.7 TOTAL_STEPS=2 SAVE_FREQ=-1 VAL_FREQ=-1 \
+OUTPUT_DIR=outputs/checkpoints/textworld_unionjs_sft_aux_smoke \
+bash train/run_grpo_textworld_smoke.sh
+```
+
+After the smoke passes, run the matched 50-step pilot with the same GPU
+allocation:
+
+```bash
+CUDA_VISIBLE_DEVICES=5,6 N_GPUS=2 \
+bash train/run_grpo_textworld_sft_aux_pilot.sh
+```
+
+`actor/sft_loss`, `actor/pg_loss`, `actor/kl_loss`, and `actor/total_loss` are
+training diagnostics. They are not substitutes for the task-disjoint
+held-out exact match, full-vocabulary KL/JS, or trajectory metrics.
+
 For a run started with console-only logging, convert its completed log once:
 
 ```bash
