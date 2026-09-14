@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import logging
 from pathlib import Path
 from typing import Any, Literal
 import uuid
@@ -13,6 +14,9 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
 from src.reward.textworld_consistency_engine import TextWorldConsistencyEngine
+
+
+logger = logging.getLogger(__name__)
 
 
 class Message(BaseModel):
@@ -187,6 +191,11 @@ def create_app(
                 **request_kwargs,
             )
         except ValueError as error:
+            logger.warning(
+                "actor consistency request rejected: %s: %s",
+                type(error).__name__,
+                error,
+            )
             raise HTTPException(status_code=422, detail=str(error)) from error
         except Exception:
             request_id = uuid.uuid4().hex

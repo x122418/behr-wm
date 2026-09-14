@@ -387,6 +387,13 @@ with a new actor/runtime, compare the batched and legacy paths on locked
 examples and require a maximum absolute metric difference of `1e-6` with
 identical within-group reward ordering.
 
+JS is non-negative mathematically, but float32 cancellation can produce tiny
+negative values when the two actor distributions are nearly identical. The
+metric implementation clamps these roundoff artifacts to zero, and the reward
+boundary independently accepts negative values only within `1e-6`; larger
+negative or non-finite values remain errors. Rejected scorer requests log the
+underlying validation reason instead of exposing only an HTTP 422 access line.
+
 Inspect the complete resolved command without creating output:
 
 ```bash

@@ -172,10 +172,13 @@ class TextWorldConsistencyServerTests(unittest.IsolatedAsyncioTestCase):
         bad = valid_payload()
         bad["predicted_observation"] = "bad"
 
-        good_response, bad_response = await asyncio.gather(
-            self.request(app, "POST", "/v1/behavior-consistency", json=good),
-            self.request(app, "POST", "/v1/behavior-consistency", json=bad),
-        )
+        with self.assertLogs(
+            "src.reward.textworld_consistency_server", level="WARNING"
+        ):
+            good_response, bad_response = await asyncio.gather(
+                self.request(app, "POST", "/v1/behavior-consistency", json=good),
+                self.request(app, "POST", "/v1/behavior-consistency", json=bad),
+            )
 
         self.assertEqual(good_response.status_code, 200)
         self.assertEqual(bad_response.status_code, 422)
@@ -219,15 +222,20 @@ class TextWorldConsistencyServerTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(response.status_code, 422)
 
     async def test_alignment_value_error_is_a_422_without_a_score(self):
-        response = await self.request(
-            create_app(engine=FakeEngine(ValueError("different action IDs"))),
-            "POST",
-            "/v1/behavior-consistency",
-            json=valid_payload(),
-        )
+        with self.assertLogs(
+            "src.reward.textworld_consistency_server", level="WARNING"
+        ) as captured:
+            response = await self.request(
+                create_app(engine=FakeEngine(ValueError("different action IDs"))),
+                "POST",
+                "/v1/behavior-consistency",
+                json=valid_payload(),
+            )
 
         self.assertEqual(response.status_code, 422)
         self.assertNotIn("score", response.json())
+        self.assertIn("ValueError", captured.output[0])
+        self.assertIn("different action IDs", captured.output[0])
 
     async def test_unexpected_inference_error_is_a_500_without_a_score(self):
         response = await self.request(

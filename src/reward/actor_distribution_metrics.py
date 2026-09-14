@@ -7,6 +7,9 @@ import math
 import torch
 
 
+_JS_NEGATIVE_ROUNDOFF_TOLERANCE = 1e-6
+
+
 def _kl_from_log_probs(log_p: torch.Tensor, log_q: torch.Tensor) -> torch.Tensor:
     return torch.sum(log_p.exp() * (log_p - log_q))
 
@@ -15,13 +18,17 @@ def _js_from_probs(p: torch.Tensor, q: torch.Tensor) -> torch.Tensor:
     mixture = 0.5 * (p + q)
     p_term = torch.where(p > 0, p * (torch.log(p) - torch.log(mixture)), 0.0)
     q_term = torch.where(q > 0, q * (torch.log(q) - torch.log(mixture)), 0.0)
-    return 0.5 * p_term.sum() + 0.5 * q_term.sum()
+    return (0.5 * p_term.sum() + 0.5 * q_term.sum()).clamp_min(0.0)
 
 
 def js_consistency_reward(js_divergence: float) -> float:
     """Map natural-log JS divergence to a bounded consistency reward."""
-    if not math.isfinite(js_divergence) or js_divergence < 0:
+    if (
+        not math.isfinite(js_divergence)
+        or js_divergence < -_JS_NEGATIVE_ROUNDOFF_TOLERANCE
+    ):
         raise ValueError("js_divergence must be finite and non-negative")
+    js_divergence = max(0.0, js_divergence)
     return min(1.0, max(0.0, 1.0 - js_divergence / math.log(2.0)))
 
 
@@ -112,8 +119,11 @@ def compute_actor_distribution_metrics(
                 union_real_normalized, union_candidate_normalized
             ) - math.log(2.0)
             union_js_values.append(
-                0.5 * _kl_from_log_probs(union_real_normalized, log_mixture)
-                + 0.5 * _kl_from_log_probs(union_candidate_normalized, log_mixture)
+                (
+                    0.5 * _kl_from_log_probs(union_real_normalized, log_mixture)
+                    + 0.5
+                    * _kl_from_log_probs(union_candidate_normalized, log_mixture)
+                ).clamp_min(0.0)
             )
 
             union_real_probs = union_real.exp()

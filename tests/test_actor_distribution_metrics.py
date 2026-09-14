@@ -24,6 +24,30 @@ class ActorDistributionMetricTests(unittest.TestCase):
         self.assertAlmostEqual(metrics["full_vocab_js"], 0.0, places=7)
         self.assertAlmostEqual(metrics["top2_union_other_js"], 0.0, places=7)
 
+    def test_nearly_identical_logits_cannot_produce_negative_js(self):
+        real_logits = torch.tensor(
+            [[3.230548620223999, -0.04055085405707359, -0.925327718257904]]
+        )
+        candidate_logits = torch.tensor(
+            [[3.230570077896118, -0.04054423049092293, -0.9253363013267517]]
+        )
+
+        metrics = compute_actor_distribution_metrics(
+            real_logits,
+            candidate_logits,
+            torch.tensor([0]),
+            top_ks=(2,),
+        )
+
+        self.assertGreaterEqual(metrics["full_vocab_js"], 0.0)
+        self.assertGreaterEqual(metrics["top2_union_js"], 0.0)
+        self.assertGreaterEqual(metrics["top2_union_other_js"], 0.0)
+
+    def test_js_reward_clamps_only_roundoff_sized_negative_values(self):
+        self.assertEqual(js_consistency_reward(-1e-7), 1.0)
+        with self.assertRaisesRegex(ValueError, "finite and non-negative"):
+            js_consistency_reward(-2e-6)
+
     def test_rejects_non_finite_logits(self):
         with self.assertRaisesRegex(ValueError, "finite"):
             compute_actor_distribution_metrics(
