@@ -1,0 +1,26 @@
+{
+  "schema_version": 1,
+  "evaluation_name": "textworld_formal_action_agreement_seed42",
+  "actor_model_path": "/DATA/disk1/huangjiaqi_data/qwen_model/Qwen3-8B",
+  "test_parquet_sha256": "c141f33545a69f88bd6df8b0662f4491350dda8a0af55b809e9f9f7bf4aaeaf0",
+  "models": [
+    {
+      "name": "sft_checkpoint",
+      "results_jsonl": "/DATA/disk1/huangjiaqi_projects/LWM_project/LWM_project/repos/behr-wm/outputs/evaluation/textworld_sft_test_1820/results.jsonl"
+    },
+    {
+      "name": "behr_grpo_steps2000_seed42",
+      "results_jsonl": "/DATA/disk1/huangjiaqi_projects/LWM_project/.worktrees/actor-consistency/LWM_project/repos/behr-wm/outputs/evaluation/textworld_formal_behr_steps2000_seed42_test1820/results.jsonl"
+    },
+    {
+      "name": "union_js_grpo_steps2000_seed42",
+      "results_jsonl": "/DATA/disk1/huangjiaqi_projects/LWM_project/.worktrees/actor-consistency/LWM_project/repos/behr-wm/outputs/evaluation/textworld_formal_union_js_steps2000_seed42_test1820/results.jsonl"
+    },
+    {
+      "name": "union_js_sft01_steps2000_seed42",
+      "status": "pending",
+      "results_jsonl": null,
+      "expected_results_jsonl": "/DATA/disk1/huangjiaqi_projects/LWM_project/.worktrees/actor-consistency/LWM_project/repos/behr-wm/outputs/evaluation/textworld_formal_union_js_sft_steps2000_seed42_test1820/results.jsonl"
+    }
+  ]
+}

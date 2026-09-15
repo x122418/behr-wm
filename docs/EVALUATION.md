@@ -132,6 +132,46 @@ python eval/02_task_success_rate/analyze_pairwise_cr.py \
 bash eval/03_behavior_consistency/run_eval_bf.sh
 ```
 
+### Generated Action Agreement (TextWorld)
+
+This offline evaluation asks the same frozen actor to greedily generate a full
+action from each real observation and each saved world-model prediction. It
+reuses the actor-view history contract from the training scorer, caches the
+real-observation action once across models, and supports resuming JSONL output.
+
+Validate the aligned inputs without loading a model or using a GPU:
+
+```bash
+python src/data/evaluate_textworld_action_agreement.py \
+  --manifest configs/textworld_action_agreement_seed42.json \
+  --output-dir outputs/evaluation/textworld_action_agreement_seed42 \
+  --validate-only
+```
+
+After every manifest entry is ready, run deterministic generation on one GPU:
+
+```bash
+CUDA_VISIBLE_DEVICES=0 python src/data/evaluate_textworld_action_agreement.py \
+  --manifest configs/textworld_action_agreement_seed42.json \
+  --output-dir outputs/evaluation/textworld_action_agreement_seed42 \
+  --batch-size 16 \
+  --max-new-tokens 32
+```
+
+The summary reports raw and normalized action agreement, agreement with the
+logged action under real/predicted observations, and parse/generation failures.
+
+Before trajectory-level TextWorld CR/CR-pw evaluation, audit the paired init
+contexts and executable game assets:
+
+```bash
+python src/data/audit_textworld_cr_readiness.py \
+  --agent-contexts data/init_contexts/textworld/agent_instruct_test.json \
+  --wm-contexts data/init_contexts/textworld/wm_instruct_test.json \
+  --games-dir data/textworld/games \
+  --output outputs/evaluation/textworld_cr_readiness.json
+```
+
 **BehR** = $\exp(-\alpha \cdot |mean\_log\_prob_{pred} - mean\_log\_prob_{real}|)$
 
 ## Agent API Modes
