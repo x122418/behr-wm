@@ -23,6 +23,12 @@ ACTOR_GPU="${ACTOR_GPU:-5}"
 LIMIT="${LIMIT:-1000}"
 CONCURRENCY="${CONCURRENCY:-8}"
 TOP_KS="${TOP_KS:-32,64}"
+STAGE="${STAGE:-all}"
+
+case "${STAGE}" in
+    all|generate|score) ;;
+    *) echo "ERROR: STAGE must be all, generate, or score" >&2; exit 2 ;;
+esac
 
 export CUDA_VISIBLE_DEVICES="${ACTOR_GPU}"
 export NO_PROXY="127.0.0.1,localhost${NO_PROXY:+,${NO_PROXY}}"
@@ -40,6 +46,7 @@ COMMAND=(
     --concurrency "${CONCURRENCY}"
     --max-tokens 512
     --top-ks "${TOP_KS}"
+    --stage "${STAGE}"
 )
 
 echo "TextWorld validation baseline"
@@ -56,13 +63,19 @@ if "$DRY_RUN"; then
     exit 0
 fi
 
-for path in "${INPUT_DATA}" "${ACTOR_MODEL}" "${PROJECT_ROOT}/.venv/bin/python"; do
+REQUIRED_PATHS=("${INPUT_DATA}" "${PROJECT_ROOT}/.venv/bin/python")
+if [ "${STAGE}" != "generate" ]; then
+    REQUIRED_PATHS+=("${ACTOR_MODEL}")
+fi
+for path in "${REQUIRED_PATHS[@]}"; do
     [ -e "${path}" ] || { echo "ERROR: required path not found: ${path}" >&2; exit 1; }
 done
-curl --noproxy 127.0.0.1,localhost -fsS --connect-timeout 10 \
-    "${WM_API_BASE}/v1/models" >/dev/null || {
-    echo "ERROR: world-model API is not healthy at ${WM_API_BASE}" >&2
-    exit 1
-}
+if [ "${STAGE}" != "score" ]; then
+    curl --noproxy 127.0.0.1,localhost -fsS --connect-timeout 10 \
+        "${WM_API_BASE}/v1/models" >/dev/null || {
+        echo "ERROR: world-model API is not healthy at ${WM_API_BASE}" >&2
+        exit 1
+    }
+fi
 
 exec "${COMMAND[@]}"

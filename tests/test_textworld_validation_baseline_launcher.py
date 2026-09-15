@@ -50,6 +50,22 @@ class TextWorldValidationBaselineLauncherTests(unittest.TestCase):
         self.assertEqual(result.returncode, 2)
         self.assertIn("unknown argument", result.stderr)
 
+    def test_score_stage_does_not_require_a_live_world_model_in_dry_run(self):
+        env = os.environ.copy()
+        env["STAGE"] = "score"
+        result = subprocess.run(
+            ["bash", str(LAUNCHER), "--dry-run"],
+            cwd=PROJECT_ROOT,
+            env=env,
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("--stage", result.stdout)
+        self.assertIn("score", result.stdout)
+
 
 if __name__ == "__main__":
     unittest.main()

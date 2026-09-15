@@ -18,9 +18,8 @@
     },
     {
       "name": "union_js_sft01_steps2000_seed42",
-      "status": "pending",
-      "results_jsonl": null,
-      "expected_results_jsonl": "/DATA/disk1/huangjiaqi_projects/LWM_project/.worktrees/actor-consistency/LWM_project/repos/behr-wm/outputs/evaluation/textworld_formal_union_js_sft_steps2000_seed42_test1820/results.jsonl"
+      "status": "ready",
+      "results_jsonl": "/DATA/disk1/huangjiaqi_projects/LWM_project/.worktrees/actor-consistency/LWM_project/repos/behr-wm/outputs/evaluation/textworld_formal_union_js_sft_steps2000_seed42_test1820/results.jsonl"
     }
   ]
 }

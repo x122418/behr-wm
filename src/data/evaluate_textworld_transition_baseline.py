@@ -275,6 +275,12 @@ def main() -> int:
     parser.add_argument("--timeout", type=float, default=120.0)
     parser.add_argument("--max-tokens", type=int, default=512)
     parser.add_argument("--top-ks", default="32,64")
+    parser.add_argument(
+        "--stage",
+        choices=("all", "generate", "score"),
+        default="all",
+        help="Run both stages, cache WM generations only, or score a complete cache",
+    )
     args = parser.parse_args()
     if args.limit is not None and args.limit < 1:
         parser.error("--limit must be positive")
@@ -289,14 +295,47 @@ def main() -> int:
         frame = frame.iloc[: args.limit]
     transitions = [transition_from_row(row) for row in frame.to_dict("records")]
     args.output_dir.mkdir(parents=True, exist_ok=True)
-    generations = generate_predictions(
-        transitions,
-        args.output_dir / "generations.jsonl",
-        api_base=args.wm_api_base,
-        concurrency=args.concurrency,
-        timeout=args.timeout,
-        max_tokens=args.max_tokens,
-    )
+    generations_path = args.output_dir / "generations.jsonl"
+    if args.stage in {"all", "generate"}:
+        generations = generate_predictions(
+            transitions,
+            generations_path,
+            api_base=args.wm_api_base,
+            concurrency=args.concurrency,
+            timeout=args.timeout,
+            max_tokens=args.max_tokens,
+        )
+    else:
+        cached_rows = _read_jsonl(generations_path)
+        cached = {row["item_id"]: row for row in cached_rows}
+        if len(cached) != len(cached_rows):
+            raise ValueError(f"duplicate item IDs in {generations_path}")
+        missing = [row["item_id"] for row in transitions if row["item_id"] not in cached]
+        if missing:
+            raise ValueError(
+                f"score stage requires a complete generation cache; "
+                f"missing {len(missing)} items"
+            )
+        generations = [cached[row["item_id"]] for row in transitions]
+
+    if args.stage == "generate":
+        successful = sum(
+            row.get("generation_status") == "ok" for row in generations
+        )
+        generation_summary = {
+            "total": len(generations),
+            "successful": successful,
+            "errors": len(generations) - successful,
+            "input": str(args.input.resolve()),
+            "wm_api_base": args.wm_api_base,
+        }
+        (args.output_dir / "generation_summary.json").write_text(
+            json.dumps(generation_summary, indent=2, ensure_ascii=False) + "\n",
+            encoding="utf-8",
+        )
+        print(json.dumps(generation_summary, indent=2, ensure_ascii=False))
+        return 0 if generation_summary["errors"] == 0 else 1
+
     results = evaluate(
         transitions,
         generations,
@@ -311,6 +350,7 @@ def main() -> int:
             "actor_model_path": str(Path(args.actor_model_path).resolve()),
             "wm_api_base": args.wm_api_base,
             "top_ks": list(top_ks),
+            "stage": args.stage,
         }
     )
     (args.output_dir / "summary.json").write_text(
