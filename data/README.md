@@ -1,65 +1,48 @@
 # Data
 
-## Overview
+## Provenance
 
-BehR-WM draws on two text-based interactive environments:
+BehR-WM evaluation uses WebShop and TextWorld assets released with *From Word
+to World: Can Large Language Models be Implicit Text-based World Models?*
+([Li et al., arXiv:2512.18832](https://arxiv.org/abs/2512.18832)).
 
-- **WebShop** ([Yao et al., 2022](https://arxiv.org/abs/2207.01206)) —
-  e-commerce web navigation over 1.18M real-world products.
-- **TextWorld** ([Côté et al., 2019](https://arxiv.org/abs/1806.11532)) —
-  procedurally generated text adventure games.
+Upstream dataset: [`X1AOX1A/LLMasWorldModels`](https://huggingface.co/datasets/X1AOX1A/LLMasWorldModels)
 
-Evaluation uses **200 standardized test tasks** per environment, taken from
-[AgentGym](https://github.com/WooooDyy/AgentGym).
+Immutable revision:
 
-## What ships in this repository
-
-The test splits required to run the full 3-stage evaluation pipeline are
-already bundled in `init_contexts/`:
-
-```
-data/init_contexts/
-├── webshop/
-│   ├── agent_instruct_test.json        (~265 KB)
-│   └── wm_instruct_test.json           (~95 KB)
-└── textworld/
-    ├── agent_instruct_test.json        (~695 KB)
-    └── wm_instruct_test.json           (~545 KB)
+```text
+ff6ae2b924d1a49e4b89825913887f2ea96cb282
 ```
 
-No extra download is needed to reproduce the evaluation numbers reported in
-the paper.
+The downloader passes this complete revision to Hugging Face so later upstream
+changes cannot silently alter the evaluation assets.
 
-## What comes later (via `scripts/download_data.py`)
+## Vendored files
 
-- **Training-split init contexts** — the `*_train.json` counterparts, used to
-  reproduce the GRPO training runs. Considerably larger (~20 MB total) and
-  therefore kept out of this git repository.
-- **Trained world-model checkpoints** — published separately on HuggingFace.
+The repository includes the paired 200-task agent/WM init contexts for WebShop
+and TextWorld under `data/init_contexts/`.
 
-Both are coming soon on HuggingFace Hub (see the
-[Release Timeline](../README.md#release-timeline) in the top-level README).
-Until then `scripts/download_data.py` prints an informative message and exits
-non-zero. If you need the training split today, please open a GitHub issue.
+## Download evaluation assets
 
-## Re-producing the data layout
+```bash
+# Both environments
+python scripts/download_data.py
 
-If you download the training split later, the full layout becomes:
-
-```
-data/init_contexts/
-├── webshop/
-│   ├── agent_instruct_train.json
-│   ├── agent_instruct_test.json
-│   ├── wm_instruct_train.json
-│   └── wm_instruct_test.json
-└── textworld/
-    ├── agent_instruct_train.json
-    ├── agent_instruct_test.json
-    ├── wm_instruct_train.json
-    └── wm_instruct_test.json
+# TextWorld only
+python scripts/download_data.py --env textworld
 ```
 
-which matches the structure expected by [`src/data/prepare_data.py`](../src/data/prepare_data.py)
-and the reference verl training command in
-[`docs/TRAINING.md`](../docs/TRAINING.md).
+The TextWorld command downloads the single-step test data, the 200-task launch
+manifest, and `textworld.zip`. Extraction creates 2,700 matched `.z8`, `.json`,
+and `.ni` game triplets under `data/textworld/games/`; task IDs 1–200 are the
+trajectory-evaluation cohort used by the bundled init contexts.
+
+| Path | Used by |
+|---|---|
+| `data/llama_factory/textworld_test_173.json` | Single-step evaluation |
+| `data/eval/textworld_test.json` | 200-task Real evaluation manifest |
+| `data/init_contexts/textworld/` | Actor/WM initial prompts |
+| `data/textworld/games/` | Real and W2R TextWorld execution |
+
+Re-running the downloader is safe. Cached files are reused, and archives are
+not re-extracted unless `--force-extract` is supplied.

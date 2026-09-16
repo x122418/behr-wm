@@ -1,103 +1,141 @@
 #!/usr/bin/env python3
-"""Fetch BehR-WM data artefacts that are not already shipped in the repo.
-
-What the repo ships (available immediately after ``git clone``):
-
-- ``data/init_contexts/{webshop,textworld}/agent_instruct_test.json``
-- ``data/init_contexts/{webshop,textworld}/wm_instruct_test.json``
-
-These test splits are all that is needed to run the evaluation pipeline
-(``eval/01_*``, ``eval/02_*``, ``eval/03_*``) end-to-end.
-
-What this script downloads (coming soon on HuggingFace Hub):
-
-- Training splits of the same init_contexts (``agent_instruct_train.json`` /
-  ``wm_instruct_train.json``), for reproducing the GRPO training runs.
-- Trained world-model checkpoints (separate script once released).
-
-Usage
------
-    python scripts/download_data.py                    # all envs, train split
-    python scripts/download_data.py --env webshop      # one environment
-    python scripts/download_data.py --env textworld    # TextWorld only
-
-The ``HF_REPO_ID`` constant below will be populated when the HuggingFace
-dataset repository goes live. Until then the script prints a clear message and
-exits with a non-zero status.
-"""
+"""Fetch pinned upstream assets required by the BehR-WM evaluations."""
 from __future__ import annotations
 
 import argparse
 import sys
+import zipfile
 from pathlib import Path
 
-# Will be filled in once the HuggingFace dataset repository is published.
-HF_REPO_ID: str | None = None  # e.g. "Ricardo-H/behr-wm-data"
-
+HF_REPO_ID = "X1AOX1A/LLMasWorldModels"
+REVISION = "ff6ae2b924d1a49e4b89825913887f2ea96cb282"
 ENVS = ("webshop", "textworld")
-
 ROOT = Path(__file__).resolve().parent.parent
-TARGET_DIR = ROOT / "data" / "init_contexts"
+DATA_DIR = ROOT / "data"
+WEBSHOP_BACKEND_DIR = ROOT / "AgentGym" / "agentenv-webshop" / "webshop"
+
+TEST_FILES = {
+    "webshop": [
+        "llama_factory/webshop_test_109.json",
+        "eval/webshop_test.json",
+        "init_contexts/webshop/agent_instruct_test.json",
+        "init_contexts/webshop/wm_instruct_test.json",
+    ],
+    "textworld": [
+        "llama_factory/textworld_test_173.json",
+        "eval/textworld_test.json",
+        "init_contexts/textworld/agent_instruct_test.json",
+        "init_contexts/textworld/wm_instruct_test.json",
+    ],
+}
+
+ARCHIVES = {
+    "textworld.zip": (DATA_DIR / "textworld", DATA_DIR / "textworld" / "games"),
+    "webshop.zip": (WEBSHOP_BACKEND_DIR, WEBSHOP_BACKEND_DIR / "data"),
+    "webshop_index.zip": (
+        WEBSHOP_BACKEND_DIR,
+        WEBSHOP_BACKEND_DIR / "search_index",
+    ),
+}
 
 
-def _expected_files(envs: list[str]) -> list[str]:
-    files: list[str] = []
-    for env in envs:
-        files.append(f"init_contexts/{env}/agent_instruct_train.json")
-        files.append(f"init_contexts/{env}/wm_instruct_train.json")
-    return files
-
-
-def _download(envs: list[str]) -> int:
-    if HF_REPO_ID is None:
-        print(
-            "[behr-wm] Training-split init contexts are not yet published on\n"
-            "         HuggingFace Hub. They are coming soon together with the\n"
-            "         trained checkpoints (see README \"Release Timeline\").\n"
-            "\n"
-            "         The TEST split needed to run evaluation is already bundled\n"
-            "         in this repository under data/init_contexts/.\n"
-            "\n"
-            "         Track progress: https://github.com/Ricardo-H/behr-wm\n"
-            "         If you need the training split today, please open a\n"
-            "         GitHub issue.",
-            file=sys.stderr,
-        )
-        return 2
-
+def _require_hub():
     try:
         from huggingface_hub import snapshot_download
-    except ImportError as exc:  # pragma: no cover
+    except ImportError as exc:
         print(
-            "[behr-wm] huggingface_hub is required. Install with:\n"
-            "             pip install huggingface_hub",
+            "[behr-wm] huggingface_hub is required. Install it with:\n"
+            "              pip install 'huggingface_hub>=0.24.0'",
             file=sys.stderr,
         )
         raise SystemExit(1) from exc
+    return snapshot_download
 
-    allow_patterns = _expected_files(envs)
-    TARGET_DIR.mkdir(parents=True, exist_ok=True)
+
+def _plan(envs: list[str], webshop_backend: bool) -> list[str]:
+    paths: list[str] = []
+    for env in envs:
+        paths.extend(TEST_FILES[env])
+    if "textworld" in envs:
+        paths.append("textworld.zip")
+    if webshop_backend:
+        paths.extend(["webshop.zip", "webshop_index.zip"])
+    return list(dict.fromkeys(paths))
+
+
+def _extract(archive_rel: str, force: bool) -> None:
+    destination, sentinel = ARCHIVES[archive_rel]
+    archive = DATA_DIR / archive_rel
+    if not archive.is_file():
+        print(f"[behr-wm] expected archive missing: {archive}", file=sys.stderr)
+        raise SystemExit(1)
+    if sentinel.exists() and not force:
+        print(f"[behr-wm] {sentinel.relative_to(ROOT)} already present, skipping extract")
+        return
+    destination.mkdir(parents=True, exist_ok=True)
+    print(f"[behr-wm] extracting {archive_rel} -> {destination.relative_to(ROOT)}/ ...")
+    with zipfile.ZipFile(archive) as archive_file:
+        archive_file.extractall(destination)
+    if not sentinel.exists():
+        print(
+            f"[behr-wm] WARNING: expected {sentinel.relative_to(ROOT)} after "
+            f"extracting {archive_rel}; the upstream archive layout may have changed.",
+            file=sys.stderr,
+        )
+
+
+def _download(envs: list[str], webshop_backend: bool, force_extract: bool) -> int:
+    snapshot_download = _require_hub()
+    paths = _plan(envs, webshop_backend)
+    print(f"[behr-wm] source:   {HF_REPO_ID}")
+    print(f"[behr-wm] revision: {REVISION}")
+    print(f"[behr-wm] fetching {len(paths)} path(s) into data/ ...")
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
     snapshot_download(
         repo_id=HF_REPO_ID,
         repo_type="dataset",
-        local_dir=str(ROOT / "data"),
-        allow_patterns=allow_patterns,
+        revision=REVISION,
+        local_dir=str(DATA_DIR),
+        allow_patterns=paths,
     )
-    print(f"[behr-wm] Downloaded {len(allow_patterns)} files into {TARGET_DIR}")
+    for archive_rel in ARCHIVES:
+        if archive_rel in paths:
+            _extract(archive_rel, force=force_extract)
+    print("[behr-wm] done. Next: docs/EVALUATION.md")
     return 0
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser = argparse.ArgumentParser(
+        description=(
+            "Download pinned BehR-WM evaluation assets from "
+            f"{HF_REPO_ID} (arXiv:2512.18832)."
+        )
+    )
     parser.add_argument(
         "--env",
         choices=(*ENVS, "all"),
         default="all",
-        help="Environment subset to download (default: all).",
+        help="Environment subset (default: all).",
+    )
+    parser.add_argument(
+        "--webshop-backend",
+        action="store_true",
+        help=(
+            "Also fetch and unpack the WebShop product corpus and search index "
+            "needed for real-environment WebShop evaluation."
+        ),
+    )
+    parser.add_argument(
+        "--force-extract",
+        action="store_true",
+        help="Re-extract archives even if the target directory already exists.",
     )
     args = parser.parse_args()
     envs = list(ENVS) if args.env == "all" else [args.env]
-    return _download(envs)
+    if args.webshop_backend and "webshop" not in envs:
+        envs.append("webshop")
+    return _download(envs, args.webshop_backend, args.force_extract)
 
 
 if __name__ == "__main__":

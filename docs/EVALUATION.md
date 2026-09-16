@@ -172,6 +172,38 @@ python src/data/audit_textworld_cr_readiness.py \
   --output outputs/evaluation/textworld_cr_readiness.json
 ```
 
+The TextWorld trajectory runtime is isolated from the training environment:
+
+```bash
+python scripts/download_data.py --env textworld
+bash scripts/env_setup/install_textworld_eval_runtime.sh
+```
+
+The installer pins the Word2World AgentGym backend and puts the TextWorld
+engine in `venv/textworld-eval`; the main `.venv` receives only the HTTP client.
+The launchers also set `NO_PROXY` for localhost because a machine-wide proxy can
+otherwise turn healthy local-server requests into HTTP 503 responses.
+
+Validate a bounded two-task launch without using GPUs:
+
+```bash
+DRY_RUN=1 NUM_EXAMPLES=2 MAX_CONCURRENCY=1 MAX_ROUND=3 \
+  EXPERIMENT_NAME=sft_smoke \
+  bash eval/02_task_success_rate/run_real_textworld.sh
+
+DRY_RUN=1 N_SAMPLES=2 MAX_STEPS=3 \
+  bash eval/02_task_success_rate/run_wm.sh \
+  sft_smoke EMPTY http://localhost:8000/v1 vllm_agent 1 0 false textworld
+
+DRY_RUN=1 TASK=textworld N_SAMPLES=2 MAX_WORKERS=1 \
+  bash eval/02_task_success_rate/run_wm2real.sh \
+  outputs/task_success_rate/wm/textworld/sft_smoke
+```
+
+When services are available, remove `DRY_RUN=1`. Run the Real baseline once
+for the frozen actor, then run WM and W2R once per world-model checkpoint. The
+pairwise analyzer rejects incomplete Real/W2R task-ID sets by default.
+
 **BehR** = $\exp(-\alpha \cdot |mean\_log\_prob_{pred} - mean\_log\_prob_{real}|)$
 
 ## Agent API Modes

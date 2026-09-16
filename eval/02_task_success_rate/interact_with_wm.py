@@ -351,6 +351,12 @@ def process_single_sample(
         raise
 
 
+def limit_items(items, n_samples=-1):
+    if n_samples is not None and int(n_samples) > 0:
+        return items[: int(n_samples)]
+    return items
+
+
 def main():
     global TASK
 
@@ -483,11 +489,13 @@ def main():
                 print(f"WARNING: id {id} is not in wm_instruct_data")
         return merged_data
 
-    test_data = merge_data(agent_instruct_data, wm_instruct_data)
+    merged_data = merge_data(agent_instruct_data, wm_instruct_data)
+    test_data = limit_items(merged_data, n_samples=args.n_samples)
     total_items = len(test_data)
-    if args.n_samples > 0:
-        test_data = test_data[: args.n_samples]
-    print(f"Loaded {total_items} items from {agent_instruct_file} and {wm_instruct_file}")
+    print(
+        f"Loaded {len(merged_data)} paired items; selected {total_items} from "
+        f"{agent_instruct_file} and {wm_instruct_file}"
+    )
 
     pending_items = []
     processed_count = 0

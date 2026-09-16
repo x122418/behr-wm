@@ -63,7 +63,13 @@ def load_results(directory: str, task: str) -> dict:
     return results
 
 
-def compute_pairwise_metrics(real: dict, w2r: dict, wm: dict = None):
+def compute_pairwise_metrics(
+    real: dict,
+    w2r: dict,
+    wm: dict = None,
+    *,
+    strict_ids: bool = True,
+):
     """Compute pair-wise CR metrics between Real and W2R results.
     
     Args:
@@ -73,6 +79,22 @@ def compute_pairwise_metrics(real: dict, w2r: dict, wm: dict = None):
     
     Returns: dict of metrics
     """
+    real_ids = set(real)
+    w2r_ids = set(w2r)
+    if strict_ids and real_ids != w2r_ids:
+        raise ValueError(
+            "Real/W2R task ID sets differ: "
+            f"real_only={sorted(real_ids - w2r_ids)}, "
+            f"w2r_only={sorted(w2r_ids - real_ids)}"
+        )
+    if strict_ids and wm is not None and set(wm) != real_ids:
+        wm_ids = set(wm)
+        raise ValueError(
+            "Real/WM task ID sets differ: "
+            f"real_only={sorted(real_ids - wm_ids)}, "
+            f"wm_only={sorted(wm_ids - real_ids)}"
+        )
+
     # Find common task IDs
     common_ids = sorted(set(real.keys()) & set(w2r.keys()))
     n = len(common_ids)
@@ -289,6 +311,11 @@ def main():
                         help="Base directory for auto-discovery")
     parser.add_argument("--save", type=str, default=None,
                         help="Save results to JSON file")
+    parser.add_argument(
+        "--allow-id-mismatch",
+        action="store_true",
+        help="Use the task-ID intersection instead of rejecting incomplete pairs.",
+    )
     
     args = parser.parse_args()
     
@@ -309,7 +336,12 @@ def main():
             w2r = load_results(p["w2r_dir"], args.task)
             wm = load_results(p["wm_dir"], args.task) if os.path.isdir(p["wm_dir"]) else None
             
-            metrics = compute_pairwise_metrics(real, w2r, wm)
+            metrics = compute_pairwise_metrics(
+                real,
+                w2r,
+                wm,
+                strict_ids=not args.allow_id_mismatch,
+            )
             label = f"{args.task} | {p['name']} (Real: {os.path.basename(p['real_dir'])})"
             print_report(label, metrics)
             all_results[p["name"]] = metrics
@@ -319,7 +351,12 @@ def main():
         w2r = load_results(args.w2r_dir, args.task)
         wm = load_results(args.wm_dir, args.task) if args.wm_dir else None
         
-        metrics = compute_pairwise_metrics(real, w2r, wm)
+        metrics = compute_pairwise_metrics(
+            real,
+            w2r,
+            wm,
+            strict_ids=not args.allow_id_mismatch,
+        )
         label = f"{args.task} | W2R={args.w2r_dir} vs Real={args.real_dir}"
         print_report(label, metrics)
         all_results["manual"] = metrics

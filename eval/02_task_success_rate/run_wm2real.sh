@@ -1,110 +1,94 @@
-#!/bin/bash
-# =============================================================================
-# Task Success Rate Evaluation - WM to Real (Replay)
-# =============================================================================
-#
-# Usage:
-#   TASK=webshop   bash run_wm2real.sh <wm_output_dir>
-#   TASK=textworld bash run_wm2real.sh <wm_output_dir>
-#
-# Supported tasks: webshop, textworld, alfworld, sciworld
-# If TASK is not set, it defaults to "webshop".
-#
-# This script replays actions from world model in real environment.
-# =============================================================================
+#!/usr/bin/env bash
+set -euo pipefail
 
-set -e
-
-# Get script directory
-SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
-PROJECT_ROOT="$( cd "$SCRIPT_DIR/../.." && pwd )"
-
-# Activate environment
-if [ -f "$PROJECT_ROOT/.venv/bin/activate" ]; then
-    source "$PROJECT_ROOT/.venv/bin/activate"
-fi
-
-# === Configuration ===
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 TASK="${TASK:-webshop}"
 WM_OUTPUT_DIR="${1:-$PROJECT_ROOT/outputs/task_success_rate/wm/$TASK}"
-MAX_WORKERS=50
+N_SAMPLES="${N_SAMPLES:--1}"
+ENV_PORT="${ENV_PORT:-$((30000 + RANDOM % 30000))}"
 
-echo "=========================================="
-echo "Task Success Rate - WM to Real (Replay)"
-echo "=========================================="
-echo "Task:           $TASK"
-echo "WM Output Dir:  $WM_OUTPUT_DIR"
-echo "=========================================="
-
-# === Start Environment Server ===
-ENV_PORT=$((30000 + RANDOM % (99999-30000+1)))
-
-start_env_server() {
+if [[ "$TASK" == "textworld" ]]; then
+    MAX_WORKERS="${MAX_WORKERS:-1}"
+    SERVER_COMMAND=(
+        "$PROJECT_ROOT/venv/textworld-eval/bin/textworld"
+        --host 127.0.0.1
+        --port "$ENV_PORT"
+    )
+else
+    MAX_WORKERS="${MAX_WORKERS:-50}"
     case "$TASK" in
         webshop)
-            webshop --host 0.0.0.0 --port $ENV_PORT >/tmp/${TASK}_server_${ENV_PORT}.log 2>&1 &
-            SERVER_PID=$!
-            ;;
-        textworld)
-            python -m agentenv.envs.textworld_server --host 0.0.0.0 --port $ENV_PORT \
-                --games_dir "$PROJECT_ROOT/data/textworld/games" \
-                >/tmp/${TASK}_server_${ENV_PORT}.log 2>&1 &
-            SERVER_PID=$!
+            SERVER_COMMAND=(webshop --host 127.0.0.1 --port "$ENV_PORT")
             ;;
         alfworld|alfworld_valid_seen|alfworld_valid_unseen)
-            python -m agentenv.envs.alfworld_server --host 0.0.0.0 --port $ENV_PORT \
-                >/tmp/${TASK}_server_${ENV_PORT}.log 2>&1 &
-            SERVER_PID=$!
+            SERVER_COMMAND=(python -m agentenv.envs.alfworld_server --host 127.0.0.1 --port "$ENV_PORT")
             ;;
         sciworld)
-            python -m agentenv.envs.sciworld_server --host 0.0.0.0 --port $ENV_PORT \
-                >/tmp/${TASK}_server_${ENV_PORT}.log 2>&1 &
-            SERVER_PID=$!
+            SERVER_COMMAND=(python -m agentenv.envs.sciworld_server --host 127.0.0.1 --port "$ENV_PORT")
             ;;
         *)
-            echo "Error: Unknown task '$TASK'. Supported: webshop, textworld, alfworld, sciworld"
+            echo "Error: unsupported task: $TASK" >&2
             exit 1
             ;;
     esac
+fi
+
+REPLAY_COMMAND=(
+    "$PROJECT_ROOT/.venv/bin/python" "$SCRIPT_DIR/cal_wm2real.py"
+    --task "$TASK"
+    --test_file_root "$WM_OUTPUT_DIR"
+    --port "$ENV_PORT"
+    --max_workers "$MAX_WORKERS"
+    --n_samples "$N_SAMPLES"
+)
+
+export NO_PROXY="127.0.0.1,localhost${NO_PROXY:+,$NO_PROXY}"
+export no_proxy="$NO_PROXY"
+
+print_command() {
+    printf '%q ' "$@"
+    printf '\n'
 }
 
-start_env_server
-trap "kill $SERVER_PID 2>/dev/null || true" EXIT INT TERM
+if [[ "${DRY_RUN:-0}" == "1" ]]; then
+    echo "NO_PROXY=127.0.0.1,localhost"
+    print_command "${SERVER_COMMAND[@]}"
+    print_command "${REPLAY_COMMAND[@]}"
+    exit 0
+fi
 
-echo "Launching $TASK server... (pid=$SERVER_PID, port=$ENV_PORT)"
+if [[ ! -d "$WM_OUTPUT_DIR" ]]; then
+    echo "Error: WM output directory not found: $WM_OUTPUT_DIR" >&2
+    exit 1
+fi
+if [[ "$TASK" == "textworld" && ! -x "${SERVER_COMMAND[0]}" ]]; then
+    echo "Error: TextWorld evaluation runtime is missing: ${SERVER_COMMAND[0]}" >&2
+    echo "Run: bash scripts/env_setup/install_textworld_eval_runtime.sh" >&2
+    exit 1
+fi
 
-# Wait for server to be ready (up to 120s)
-MAX_WAIT=120
-WAITED=0
-echo -n "Waiting for $TASK server to be ready"
-while ! curl -s "http://localhost:$ENV_PORT" > /dev/null 2>&1; do
-    if ! kill -0 $SERVER_PID 2>/dev/null; then
-        echo ""
-        echo "Error: $TASK server process died. Check /tmp/${TASK}_server_${ENV_PORT}.log"
-        tail -20 /tmp/${TASK}_server_${ENV_PORT}.log
+cd "$PROJECT_ROOT"
+SERVER_LOG="/tmp/lwm_${TASK}_server_${ENV_PORT}.log"
+"${SERVER_COMMAND[@]}" >"$SERVER_LOG" 2>&1 &
+SERVER_PID=$!
+cleanup() {
+    kill "$SERVER_PID" 2>/dev/null || true
+}
+trap cleanup EXIT INT TERM
+
+for _ in $(seq 1 120); do
+    if curl --noproxy '*' -fsS "http://127.0.0.1:$ENV_PORT/" >/dev/null; then
+        "${REPLAY_COMMAND[@]}"
+        exit 0
+    fi
+    if ! kill -0 "$SERVER_PID" 2>/dev/null; then
+        echo "Error: $TASK server exited. See $SERVER_LOG" >&2
+        tail -40 "$SERVER_LOG" >&2 || true
         exit 1
     fi
-    if [ $WAITED -ge $MAX_WAIT ]; then
-        echo ""
-        echo "Error: $TASK server not ready after ${MAX_WAIT}s. Check /tmp/${TASK}_server_${ENV_PORT}.log"
-        tail -20 /tmp/${TASK}_server_${ENV_PORT}.log
-        exit 1
-    fi
-    echo -n "."
-    sleep 5
-    WAITED=$((WAITED + 5))
+    sleep 1
 done
-echo ""
-echo "$TASK server is running on port $ENV_PORT (took ~${WAITED}s)"
 
-# === Run Replay ===
-python "$SCRIPT_DIR/cal_wm2real.py" \
-    --task "$TASK" \
-    --test_file_root "$WM_OUTPUT_DIR" \
-    --port $ENV_PORT \
-    --max_workers $MAX_WORKERS
-
-echo "=========================================="
-echo "Evaluation Complete!"
-echo "Results saved to: $WM_OUTPUT_DIR/valid_on_real_env/"
-echo "=========================================="
+echo "Error: $TASK server did not become ready. See $SERVER_LOG" >&2
+exit 1

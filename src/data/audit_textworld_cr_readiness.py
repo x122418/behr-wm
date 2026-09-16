@@ -5,8 +5,13 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 from pathlib import Path
 from typing import Any
+
+
+EXECUTABLE_GAME_EXTENSIONS = {".z8", ".ulx"}
+GAME_ID_PATTERN = re.compile(r"^textworld_(\d+)$")
 
 
 def audit_cr_readiness(
@@ -20,21 +25,38 @@ def audit_cr_readiness(
     agent_ids.discard(None)
     wm_ids.discard(None)
     paired_ids = agent_ids & wm_ids
+    executable_game_files = [
+        path
+        for path in game_files
+        if Path(path).suffix.lower() in EXECUTABLE_GAME_EXTENSIONS
+    ]
+    game_ids = set()
+    for path in executable_game_files:
+        match = GAME_ID_PATTERN.fullmatch(Path(path).stem)
+        if match is not None:
+            game_ids.add(int(match.group(1)))
+    missing_game_ids = sorted(paired_ids - game_ids, key=str)
     blockers = []
     if agent_ids != wm_ids:
         blockers.append("agent/WM context IDs do not match")
-    if not game_files:
+    if not executable_game_files:
         blockers.append("no executable TextWorld game files")
-    if len(game_files) < len(paired_ids):
+    if len(executable_game_files) < len(paired_ids):
         blockers.append("fewer game files than paired evaluation contexts")
+    if missing_game_ids:
+        blockers.append("missing executable games for paired context IDs")
     return {
         "agent_context_count": len(agent_contexts),
         "wm_context_count": len(wm_contexts),
         "paired_context_count": len(paired_ids),
         "agent_only_ids": sorted(agent_ids - wm_ids, key=str),
         "wm_only_ids": sorted(wm_ids - agent_ids, key=str),
-        "game_file_count": len(game_files),
-        "game_file_extensions": sorted({Path(path).suffix for path in game_files}),
+        "game_file_count": len(executable_game_files),
+        "game_file_extensions": sorted(
+            {Path(path).suffix for path in executable_game_files}
+        ),
+        "paired_game_count": len(paired_ids & game_ids),
+        "missing_game_ids": missing_game_ids,
         "blocking_reasons": blockers,
         "ready": not blockers,
         "note": (

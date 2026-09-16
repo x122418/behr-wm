@@ -34,7 +34,7 @@ class AuditCrReadinessTests(unittest.TestCase):
         ]
 
         report = audit_cr_readiness(
-            agent_contexts, wm_contexts, ["game_0.ulx"]
+            agent_contexts, wm_contexts, ["textworld_2.z8"]
         )
 
         self.assertEqual(report["agent_only_ids"], [1])
@@ -51,11 +51,41 @@ class AuditCrReadinessTests(unittest.TestCase):
         wm_contexts = [{"id": 7, "messages": []}]
 
         report = audit_cr_readiness(
-            agent_contexts, wm_contexts, ["game_0.ulx"]
+            agent_contexts,
+            wm_contexts,
+            ["textworld_7.json", "textworld_7.ni", "textworld_7.z8"],
         )
 
         self.assertTrue(report["ready"])
+        self.assertEqual(report["game_file_count"], 1)
+        self.assertEqual(report["paired_game_count"], 1)
+        self.assertEqual(report["missing_game_ids"], [])
         self.assertEqual(report["blocking_reasons"], [])
+
+    def test_reports_the_exact_context_ids_without_executable_games(self):
+        agent_contexts = [
+            {"data_idx": 1, "messages": []},
+            {"data_idx": 2, "messages": []},
+        ]
+        wm_contexts = [
+            {"id": 1, "messages": []},
+            {"id": 2, "messages": []},
+        ]
+
+        report = audit_cr_readiness(
+            agent_contexts,
+            wm_contexts,
+            ["textworld_1.z8", "textworld_2.json", "unrelated.z8"],
+        )
+
+        self.assertFalse(report["ready"])
+        self.assertEqual(report["game_file_count"], 2)
+        self.assertEqual(report["paired_game_count"], 1)
+        self.assertEqual(report["missing_game_ids"], [2])
+        self.assertIn(
+            "missing executable games for paired context IDs",
+            report["blocking_reasons"],
+        )
 
 
 if __name__ == "__main__":

@@ -33,6 +33,19 @@ bash scripts/servers/start_webshop_env.sh 36001
 bash scripts/servers/start_agent_server.sh -m Qwen/Qwen3-8B -p 8000 -gpu 1
 ```
 
+For TextWorld, first download the pinned executable games and install the
+isolated CPU environment server:
+
+```bash
+python scripts/download_data.py --env textworld
+bash scripts/env_setup/install_textworld_eval_runtime.sh
+```
+
+Use `run_real_textworld.sh` for the TextWorld Real baseline. `run_wm.sh` and
+`run_wm2real.sh` accept `N_SAMPLES`, while all three launchers support
+`DRY_RUN=1` for a no-GPU preflight. TextWorld W2R should start with
+`MAX_WORKERS=1` because each worker owns an interpreter instance.
+
 ### Step 1: Agent in World Model
 
 ```bash
