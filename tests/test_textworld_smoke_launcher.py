@@ -10,6 +10,108 @@ LAUNCHER = PROJECT_ROOT / "train" / "run_grpo_textworld_smoke.sh"
 
 
 class TextWorldSmokeLauncherTests(unittest.TestCase):
+    def test_explicit_lora_configuration_is_forwarded_to_verl(self):
+        env = os.environ.copy()
+        env.update(
+            {
+                "LORA_RANK": "32",
+                "LORA_ALPHA": "32",
+                "LORA_TARGET_MODULES": "all-linear",
+            }
+        )
+
+        result = subprocess.run(
+            ["bash", str(LAUNCHER), "--dry-run"],
+            cwd=PROJECT_ROOT,
+            env=env,
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        for expected in (
+            "actor_rollout_ref.model.lora_rank=32",
+            "actor_rollout_ref.model.lora_alpha=32",
+            "actor_rollout_ref.model.target_modules=all-linear",
+            "actor_rollout_ref.rollout.load_format=safetensors",
+            "actor_rollout_ref.rollout.layered_summon=True",
+        ):
+            self.assertIn(expected, result.stdout)
+
+    def test_omitted_lora_configuration_preserves_full_parameter_mode(self):
+        env = os.environ.copy()
+        for key in ("LORA_RANK", "LORA_ALPHA", "LORA_TARGET_MODULES"):
+            env.pop(key, None)
+
+        result = subprocess.run(
+            ["bash", str(LAUNCHER), "--dry-run"],
+            cwd=PROJECT_ROOT,
+            env=env,
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertNotIn("actor_rollout_ref.model.lora_", result.stdout)
+        self.assertNotIn("actor_rollout_ref.model.target_modules=", result.stdout)
+        self.assertNotIn("actor_rollout_ref.rollout.load_format=", result.stdout)
+        self.assertNotIn("actor_rollout_ref.rollout.layered_summon=", result.stdout)
+
+    def test_reward_worker_count_is_explicit_and_dead_reward_kwarg_is_absent(self):
+        result = subprocess.run(
+            ["bash", str(LAUNCHER), "--dry-run"],
+            cwd=PROJECT_ROOT,
+            env=os.environ.copy(),
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("reward.num_workers=8", result.stdout)
+        self.assertNotIn("reward_kwargs.max_workers", result.stdout)
+
+    def test_can_disable_ray_dashboard_for_parallel_local_runs(self):
+        env = {**os.environ, "RAY_INCLUDE_DASHBOARD": "False"}
+
+        result = subprocess.run(
+            ["bash", str(LAUNCHER), "--dry-run"],
+            cwd=PROJECT_ROOT,
+            env=env,
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn(
+            "++ray_kwargs.ray_init.include_dashboard=False",
+            result.stdout,
+        )
+
+    def test_invalid_lora_rank_fails_before_creating_output(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            output_dir = Path(tmpdir) / "output"
+            env = {
+                **os.environ,
+                "LORA_RANK": "invalid",
+                "OUTPUT_DIR": str(output_dir),
+            }
+            result = subprocess.run(
+                ["bash", str(LAUNCHER)],
+                cwd=PROJECT_ROOT,
+                env=env,
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("LORA_RANK", result.stderr)
+            self.assertFalse(output_dir.exists())
+
     def test_dry_run_forwards_explicit_reproducibility_and_retention_controls(self):
         env = os.environ.copy()
         env.update(

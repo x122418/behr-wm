@@ -332,16 +332,29 @@ PYTHONPATH=. .venv/bin/python \
 
 ## 10. Formal 2,000-step TextWorld comparison
 
-The first formal scale-up uses the full task-disjoint training parquet as a
+The LoRA formal scale-up uses the full task-disjoint training parquet as a
 deterministically shuffled pool. Each trained arm receives the same first
-2,000 batches (`data.seed=42`, batch size 4), `G=4`, and rollout temperature
-0.7. Run the arms sequentially in this order:
+2,000 batches (`data.seed=42`, batch size 4), `G=4`, rollout temperature 0.7,
+actor learning rate `5e-6`, and LoRA configuration `r=32`, `alpha=32`,
+`target_modules=all-linear`. Run the arms sequentially in this order:
 
 1. `behr`
 2. `union_js`
 3. `union_js_sft`
 
-Reserve two otherwise empty H100 GPUs for VERL and one for the frozen actor.
+The formal launcher enables LoRA by default. The smoke launcher remains
+backward compatible: omitting `LORA_RANK` keeps the existing full-parameter
+path. All three formal arms must use the same `ACTOR_LR`, `LORA_RANK`,
+`LORA_ALPHA`, `LORA_TARGET_MODULES`, and `REWARD_NUM_WORKERS`. These values are
+stored in the immutable run manifest, so a resume with a changed value is
+rejected. The only intended arm differences are the reward mode and auxiliary
+SFT coefficient.
+
+Reserve one otherwise empty H100 GPU for LoRA training plus colocated vLLM
+rollout and one H100 for the frozen actor scorer. The one-card VERL allocation
+is accepted only after the two-step gate below records finite losses, no OOM,
+and an updated LoRA adapter. If that gate does not fit, use two VERL GPUs for
+all three arms rather than changing only one arm.
 Require at least 130 GB free on `/DATA/disk1` before starting an arm.
 The formal launcher also exports `HF_DATASETS_CACHE` to
 `/DATA/disk1/huangjiaqi_cache/lwm_hf_datasets` by default. This keeps the
@@ -397,7 +410,7 @@ underlying validation reason instead of exposing only an HTTP 422 access line.
 Inspect the complete resolved command without creating output:
 
 ```bash
-FORMAL_ARM=behr CUDA_VISIBLE_DEVICES=5,6 N_GPUS=2 \
+FORMAL_ARM=behr CUDA_VISIBLE_DEVICES=6 N_GPUS=1 \
   bash train/run_grpo_textworld_formal.sh --dry-run
 ```
 
@@ -405,9 +418,9 @@ Before a long run, use the exact formal data, sampling, and seed settings for a
 fresh two-step GPU gate while disabling checkpointing and validation:
 
 ```bash
-FORMAL_ARM=union_js_sft CUDA_VISIBLE_DEVICES=5,6 N_GPUS=2 \
+FORMAL_ARM=union_js_sft CUDA_VISIBLE_DEVICES=6 N_GPUS=1 \
 TOTAL_STEPS=2 SAVE_FREQ=-1 VAL_FREQ=-1 \
-OUTPUT_DIR=outputs/checkpoints/textworld_formal_union_js_sft_smoke2_seed42 \
+OUTPUT_DIR=outputs/checkpoints/textworld_formal_union_js_sft_lora_r32_smoke2_seed42 \
   bash train/run_grpo_textworld_formal.sh
 ```
 
@@ -415,7 +428,7 @@ Start a formal arm only after the smoke reports two finite steps, no OOM, and
 no scorer failure:
 
 ```bash
-FORMAL_ARM=behr CUDA_VISIBLE_DEVICES=5,6 N_GPUS=2 \
+FORMAL_ARM=behr CUDA_VISIBLE_DEVICES=6 N_GPUS=1 \
   bash train/run_grpo_textworld_formal.sh
 ```
 
@@ -424,32 +437,58 @@ The default run validates every 250 steps, saves every 1,000 steps, and sets
 latest checkpoint:
 
 ```bash
-FORMAL_ARM=behr FORMAL_RESUME=1 CUDA_VISIBLE_DEVICES=5,6 N_GPUS=2 \
+FORMAL_ARM=behr FORMAL_RESUME=1 CUDA_VISIBLE_DEVICES=6 N_GPUS=1 \
   bash train/run_grpo_textworld_formal.sh
 ```
 
-Do not set `FORMAL_RESUME=1` for a different arm, seed, model, scorer, or
-training budget; the immutable manifest rejects such a mismatch.
+Do not set `FORMAL_RESUME=1` for a different arm, seed, model, scorer, training
+budget, learning rate, reward-worker count, or LoRA configuration; the
+immutable manifest rejects such a mismatch.
 
-After step 2,000, verify both FSDP rank shards and merge the actor:
+VERL 0.7.1 does not repopulate its in-memory checkpoint history after a new
+process resumes, so its built-in retention limit can leave the loaded
+checkpoint beside the newly saved one. After a successful formal launcher
+exit, `src/training/textworld_checkpoint_retention.py` reads the atomic latest
+checkpoint tracker and removes only older `global_step_N` directories. It
+refuses to delete anything when the manifest or tracker is invalid, the
+tracked checkpoint is missing, or a directory is newer than the tracker.
+
+`reward.num_workers=8` is explicit in the launcher. This is the Ray reward
+manager concurrency used by VERL. The old
+`custom_reward_function.reward_kwargs.max_workers=4` override was not consumed
+by the TextWorld reward function and has been removed; this makes the existing
+effective concurrency explicit rather than changing the reward computation.
+
+After step 2,000, verify every expected FSDP rank shard and merge the actor:
 
 ```bash
 PYTHONPATH=. .venv/bin/python -m verl.model_merger merge --backend fsdp \
-  --local_dir outputs/checkpoints/textworld_formal_<arm>_steps2000_seed42/global_step_2000/actor \
-  --target_dir outputs/merged_models/textworld_formal_<arm>_steps2000_seed42
+  --local_dir outputs/checkpoints/textworld_formal_<arm>_lora_r32_steps2000_seed42/global_step_2000/actor \
+  --target_dir outputs/merged_models/textworld_formal_<arm>_lora_r32_steps2000_seed42
 ```
+
+For a LoRA checkpoint, also require a loadable
+`global_step_2000/actor/lora_adapter/adapter_model.safetensors` and matching
+`adapter_config.json`. The installed VERL merger can export a
+`lora_adapter/` directory, but the repository's current world-model server
+accepts only one model path. Therefore, do not start the full evaluation or
+delete checkpoint shards until the two-step export gate has verified either a
+PEFT `merge_and_unload()` export or an explicitly LoRA-enabled vLLM launch.
+LoRA reduces trainable optimizer state, but a VERL FSDP resume checkpoint may
+still contain base-model shards; keep `trainer.max_actor_ckpt_to_keep=1` and
+continue monitoring disk usage.
 
 Serve the merged model on port 8001, then run the common deterministic
 transition evaluator on validation and test. Use a separate GPU for the frozen
 actor:
 
 ```bash
-OUTPUT_DIR=outputs/evaluation/textworld_formal_<arm>_steps2000_seed42_val1000 \
+OUTPUT_DIR=outputs/evaluation/textworld_formal_<arm>_lora_r32_steps2000_seed42_val1000 \
 ACTOR_GPU=5 LIMIT=1000 CONCURRENCY=8 \
   bash scripts/evaluate_textworld_validation_baseline.sh
 
 INPUT_DATA=../../data/processed/textworld_grpo_task_split_v1/test/test.parquet \
-OUTPUT_DIR=outputs/evaluation/textworld_formal_<arm>_steps2000_seed42_test1820 \
+OUTPUT_DIR=outputs/evaluation/textworld_formal_<arm>_lora_r32_steps2000_seed42_test1820 \
 ACTOR_GPU=5 LIMIT=1820 CONCURRENCY=8 \
   bash scripts/evaluate_textworld_validation_baseline.sh
 ```

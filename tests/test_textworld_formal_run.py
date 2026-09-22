@@ -75,6 +75,19 @@ class TextWorldFormalRunTests(unittest.TestCase):
                     "250",
                     "--max-actor-ckpt-to-keep",
                     "1",
+                    "--actor-lr",
+                    "5e-6",
+                    "--reward-num-workers",
+                    "8",
+                    "--lora-rank",
+                    "32",
+                    "--lora-alpha",
+                    "32",
+                    "--lora-target-modules",
+                    "all-linear",
+                    "--rollout-load-format",
+                    "safetensors",
+                    "--layered-summon",
                     "--no-filter-overlong-prompts",
                 ],
                 cwd=Path(__file__).resolve().parents[1],
@@ -87,8 +100,15 @@ class TextWorldFormalRunTests(unittest.TestCase):
             actual = json.loads(
                 (output_dir / "formal_run_manifest.json").read_text(encoding="utf-8")
             )
-            self.assertEqual(actual["schema_version"], 2)
+            self.assertEqual(actual["schema_version"], 3)
             self.assertIs(actual["filter_overlong_prompts"], False)
+            self.assertEqual(actual["actor_lr"], 5e-6)
+            self.assertEqual(actual["reward_num_workers"], 8)
+            self.assertEqual(actual["lora_rank"], 32)
+            self.assertEqual(actual["lora_alpha"], 32)
+            self.assertEqual(actual["lora_target_modules"], "all-linear")
+            self.assertEqual(actual["rollout_load_format"], "safetensors")
+            self.assertIs(actual["layered_summon"], True)
 
     def test_new_run_writes_canonical_manifest(self):
         with tempfile.TemporaryDirectory() as tmpdir:

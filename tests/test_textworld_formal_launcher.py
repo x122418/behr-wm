@@ -47,6 +47,35 @@ class TextWorldFormalLauncherTests(unittest.TestCase):
                     "trainer.save_freq=1000",
                     "trainer.max_actor_ckpt_to_keep=1",
                     "trainer.resume_mode=disable",
+                    "actor_rollout_ref.actor.optim.lr=5e-6",
+                    "actor_rollout_ref.model.lora_rank=32",
+                    "actor_rollout_ref.model.lora_alpha=32",
+                    "actor_rollout_ref.model.target_modules=all-linear",
+                    "actor_rollout_ref.rollout.load_format=safetensors",
+                    "actor_rollout_ref.rollout.layered_summon=True",
+                    "reward.num_workers=8",
+                ):
+                    self.assertIn(expected, result.stdout)
+                self.assertNotIn("reward_kwargs.max_workers", result.stdout)
+
+    def test_formal_lora_configuration_can_be_overridden_as_one_shared_bundle(self):
+        for arm in ("behr", "union_js", "union_js_sft"):
+            with self.subTest(arm=arm):
+                result = self.dry_run(
+                    arm,
+                    LORA_RANK="64",
+                    LORA_ALPHA="128",
+                    LORA_TARGET_MODULES="q_proj,v_proj",
+                    ACTOR_LR="1e-5",
+                    REWARD_NUM_WORKERS="6",
+                )
+                self.assertEqual(result.returncode, 0, result.stderr)
+                for expected in (
+                    "actor_rollout_ref.actor.optim.lr=1e-5",
+                    "actor_rollout_ref.model.lora_rank=64",
+                    "actor_rollout_ref.model.lora_alpha=128",
+                    "actor_rollout_ref.model.target_modules=q_proj,v_proj",
+                    "reward.num_workers=6",
                 ):
                     self.assertIn(expected, result.stdout)
 

@@ -37,11 +37,17 @@ EXPERIMENT_NAME="${EXPERIMENT_NAME:-textworld-behr-smoke}"
 GROUP_SIZE="${GROUP_SIZE:-2}"
 ROLLOUT_TEMPERATURE="${ROLLOUT_TEMPERATURE:-1.3}"
 SFT_LOSS_COEF="${SFT_LOSS_COEF:-0.0}"
+ACTOR_LR="${ACTOR_LR:-5e-6}"
+REWARD_NUM_WORKERS="${REWARD_NUM_WORKERS:-8}"
+LORA_RANK="${LORA_RANK:-0}"
+LORA_ALPHA="${LORA_ALPHA:-${LORA_RANK}}"
+LORA_TARGET_MODULES="${LORA_TARGET_MODULES:-all-linear}"
 DATA_SEED="${DATA_SEED:-}"
 ACTOR_DATA_LOADER_SEED="${ACTOR_DATA_LOADER_SEED:-}"
 MAX_ACTOR_CKPT_TO_KEEP="${MAX_ACTOR_CKPT_TO_KEEP:-}"
 RESUME_MODE="${RESUME_MODE:-}"
 RAY_TEMP_DIR="${RAY_TEMP_DIR:-}"
+RAY_INCLUDE_DASHBOARD="${RAY_INCLUDE_DASHBOARD:-}"
 FILTER_OVERLONG_PROMPTS="${FILTER_OVERLONG_PROMPTS:-True}"
 case "${RESUME_MODE}" in
     ""|auto|disable|resume_path) ;;
@@ -51,6 +57,28 @@ case "${FILTER_OVERLONG_PROMPTS}" in
     True|False) ;;
     *) echo "ERROR: FILTER_OVERLONG_PROMPTS must be True or False" >&2; exit 2 ;;
 esac
+case "${RAY_INCLUDE_DASHBOARD}" in
+    ""|True|False) ;;
+    *) echo "ERROR: RAY_INCLUDE_DASHBOARD must be True, False, or empty" >&2; exit 2 ;;
+esac
+if [[ ! "${REWARD_NUM_WORKERS}" =~ ^[1-9][0-9]*$ ]]; then
+    echo "ERROR: REWARD_NUM_WORKERS must be a positive integer" >&2
+    exit 2
+fi
+if [[ ! "${LORA_RANK}" =~ ^[0-9]+$ ]]; then
+    echo "ERROR: LORA_RANK must be a non-negative integer" >&2
+    exit 2
+fi
+if (( LORA_RANK > 0 )); then
+    if [[ ! "${LORA_ALPHA}" =~ ^[1-9][0-9]*$ ]]; then
+        echo "ERROR: LORA_ALPHA must be a positive integer when LoRA is enabled" >&2
+        exit 2
+    fi
+    if [[ -z "${LORA_TARGET_MODULES}" ]]; then
+        echo "ERROR: LORA_TARGET_MODULES must not be empty when LoRA is enabled" >&2
+        exit 2
+    fi
+fi
 TOTAL_STEPS="${TOTAL_STEPS:-2}"
 SAVE_FREQ="${SAVE_FREQ:--1}"
 VAL_FREQ="${VAL_FREQ:--1}"
@@ -68,7 +96,7 @@ COMMAND=(
     "data.filter_overlong_prompts=${FILTER_OVERLONG_PROMPTS}"
     data.truncation=left
     "actor_rollout_ref.model.path=${WORLD_MODEL}"
-    actor_rollout_ref.actor.optim.lr=5e-6
+    "actor_rollout_ref.actor.optim.lr=${ACTOR_LR}"
     actor_rollout_ref.actor.ppo_mini_batch_size=4
     actor_rollout_ref.actor.ppo_micro_batch_size_per_gpu=1
     actor_rollout_ref.actor.use_kl_loss=True
@@ -100,7 +128,7 @@ COMMAND=(
     ++custom_reward_function.reward_kwargs.behavior_weight=1.0
     ++custom_reward_function.reward_kwargs.facts_weight=0.0
     ++custom_reward_function.reward_kwargs.format_penalty=-1.0
-    ++custom_reward_function.reward_kwargs.max_workers=4
+    "reward.num_workers=${REWARD_NUM_WORKERS}"
     'trainer.logger=["console","tensorboard"]'
     trainer.project_name=behr-wm-textworld
     "trainer.experiment_name=${EXPERIMENT_NAME}"
@@ -113,6 +141,15 @@ COMMAND=(
     "trainer.total_training_steps=${TOTAL_STEPS}"
     "trainer.default_local_dir=${OUTPUT_DIR}"
 )
+if (( LORA_RANK > 0 )); then
+    COMMAND+=(
+        "actor_rollout_ref.model.lora_rank=${LORA_RANK}"
+        "actor_rollout_ref.model.lora_alpha=${LORA_ALPHA}"
+        "actor_rollout_ref.model.target_modules=${LORA_TARGET_MODULES}"
+        actor_rollout_ref.rollout.load_format=safetensors
+        ++actor_rollout_ref.rollout.layered_summon=True
+    )
+fi
 if [[ -n "${DATA_SEED}" ]]; then
     COMMAND+=("data.seed=${DATA_SEED}")
 fi
@@ -128,6 +165,9 @@ fi
 if [[ -n "${RAY_TEMP_DIR}" ]]; then
     COMMAND+=("++ray_kwargs.ray_init._temp_dir=${RAY_TEMP_DIR}")
 fi
+if [[ -n "${RAY_INCLUDE_DASHBOARD}" ]]; then
+    COMMAND+=("++ray_kwargs.ray_init.include_dashboard=${RAY_INCLUDE_DASHBOARD}")
+fi
 echo "TextWorld BehR GRPO smoke configuration"
 echo "  GPUs: ${GPU_IDS} (${N_GPUS})"
 echo "  World model: ${WORLD_MODEL}"
@@ -136,6 +176,9 @@ echo "  Validation: ${VAL_DATA}"
 echo "  Judge: ${JUDGE_URL}"
 echo "  Consistency scorer: ${CONSISTENCY_URL} (top-k=${CONSISTENCY_TOP_K})"
 echo "  Reward mode: ${REWARD_MODE}"
+echo "  Actor learning rate: ${ACTOR_LR}"
+echo "  Reward workers: ${REWARD_NUM_WORKERS}"
+echo "  LoRA rank/alpha/targets: ${LORA_RANK}/${LORA_ALPHA}/${LORA_TARGET_MODULES}"
 echo "  Output: ${OUTPUT_DIR}"
 echo "  TENSORBOARD_DIR=${TENSORBOARD_DIR}"
 printf '  %s\n' "${COMMAND[@]}"

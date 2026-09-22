@@ -69,6 +69,17 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--save-freq", type=int, required=True)
     parser.add_argument("--val-freq", type=int, required=True)
     parser.add_argument("--max-actor-ckpt-to-keep", type=int, required=True)
+    parser.add_argument("--actor-lr", type=float, required=True)
+    parser.add_argument("--reward-num-workers", type=int, required=True)
+    parser.add_argument("--lora-rank", type=int, required=True)
+    parser.add_argument("--lora-alpha", type=int, required=True)
+    parser.add_argument("--lora-target-modules", required=True)
+    parser.add_argument("--rollout-load-format", required=True)
+    parser.add_argument(
+        "--layered-summon",
+        action=argparse.BooleanOptionalAction,
+        required=True,
+    )
     parser.add_argument(
         "--filter-overlong-prompts",
         action=argparse.BooleanOptionalAction,
@@ -80,7 +91,7 @@ def _parse_args() -> argparse.Namespace:
 def main() -> int:
     args = _parse_args()
     manifest = {
-        "schema_version": 2,
+        "schema_version": 3,
         "arm": args.arm,
         "reward_mode": args.reward_mode,
         "sft_loss_coef": args.sft_loss_coef,
@@ -97,6 +108,13 @@ def main() -> int:
         "save_freq": args.save_freq,
         "val_freq": args.val_freq,
         "max_actor_ckpt_to_keep": args.max_actor_ckpt_to_keep,
+        "actor_lr": args.actor_lr,
+        "reward_num_workers": args.reward_num_workers,
+        "lora_rank": args.lora_rank,
+        "lora_alpha": args.lora_alpha,
+        "lora_target_modules": args.lora_target_modules,
+        "rollout_load_format": args.rollout_load_format,
+        "layered_summon": args.layered_summon,
         "filter_overlong_prompts": args.filter_overlong_prompts,
     }
     try:
