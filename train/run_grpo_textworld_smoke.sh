@@ -39,6 +39,7 @@ ROLLOUT_TEMPERATURE="${ROLLOUT_TEMPERATURE:-1.3}"
 SFT_LOSS_COEF="${SFT_LOSS_COEF:-0.0}"
 ACTOR_LR="${ACTOR_LR:-5e-6}"
 REWARD_NUM_WORKERS="${REWARD_NUM_WORKERS:-8}"
+DATALOADER_NUM_WORKERS="${DATALOADER_NUM_WORKERS:-0}"
 LORA_RANK="${LORA_RANK:-0}"
 LORA_ALPHA="${LORA_ALPHA:-${LORA_RANK}}"
 LORA_TARGET_MODULES="${LORA_TARGET_MODULES:-all-linear}"
@@ -63,6 +64,10 @@ case "${RAY_INCLUDE_DASHBOARD}" in
 esac
 if [[ ! "${REWARD_NUM_WORKERS}" =~ ^[1-9][0-9]*$ ]]; then
     echo "ERROR: REWARD_NUM_WORKERS must be a positive integer" >&2
+    exit 2
+fi
+if [[ ! "${DATALOADER_NUM_WORKERS}" =~ ^[0-9]+$ ]]; then
+    echo "ERROR: DATALOADER_NUM_WORKERS must be a non-negative integer" >&2
     exit 2
 fi
 if [[ ! "${LORA_RANK}" =~ ^[0-9]+$ ]]; then
@@ -93,6 +98,7 @@ COMMAND=(
     data.train_batch_size=4
     data.max_prompt_length=4096
     data.max_response_length=512
+    "data.dataloader_num_workers=${DATALOADER_NUM_WORKERS}"
     "data.filter_overlong_prompts=${FILTER_OVERLONG_PROMPTS}"
     data.truncation=left
     "actor_rollout_ref.model.path=${WORLD_MODEL}"
@@ -178,6 +184,7 @@ echo "  Consistency scorer: ${CONSISTENCY_URL} (top-k=${CONSISTENCY_TOP_K})"
 echo "  Reward mode: ${REWARD_MODE}"
 echo "  Actor learning rate: ${ACTOR_LR}"
 echo "  Reward workers: ${REWARD_NUM_WORKERS}"
+echo "  DataLoader workers: ${DATALOADER_NUM_WORKERS}"
 echo "  LoRA rank/alpha/targets: ${LORA_RANK}/${LORA_ALPHA}/${LORA_TARGET_MODULES}"
 echo "  Output: ${OUTPUT_DIR}"
 echo "  TENSORBOARD_DIR=${TENSORBOARD_DIR}"
@@ -215,4 +222,4 @@ export WANDB_MODE=disabled
 export TENSORBOARD_DIR
 export NO_PROXY=127.0.0.1,localhost
 export no_proxy=127.0.0.1,localhost
-"${COMMAND[@]}" 2>&1 | tee "${OUTPUT_DIR}/logs/train.log"
+"${COMMAND[@]}" 2>&1 | tee -a "${OUTPUT_DIR}/logs/train.log"

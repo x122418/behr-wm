@@ -1,5 +1,6 @@
 import os
 from pathlib import Path
+import shutil
 import subprocess
 import tempfile
 import unittest
@@ -72,6 +73,22 @@ class TextWorldSmokeLauncherTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("reward.num_workers=8", result.stdout)
         self.assertNotIn("reward_kwargs.max_workers", result.stdout)
+
+    def test_dataloader_workers_default_to_in_process_for_clean_ray_shutdown(self):
+        env = os.environ.copy()
+        env.pop("DATALOADER_NUM_WORKERS", None)
+
+        result = subprocess.run(
+            ["bash", str(LAUNCHER), "--dry-run"],
+            cwd=PROJECT_ROOT,
+            env=env,
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("data.dataloader_num_workers=0", result.stdout)
 
     def test_can_disable_ray_dashboard_for_parallel_local_runs(self):
         env = {**os.environ, "RAY_INCLUDE_DASHBOARD": "False"}
@@ -294,6 +311,58 @@ class TextWorldSmokeLauncherTests(unittest.TestCase):
 
             self.assertIn(
                 f"TENSORBOARD_DIR={output_dir / 'tensorboard'}", result.stdout
+            )
+
+    def test_real_run_appends_to_existing_training_log(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            project_root = Path(tmpdir) / "project"
+            train_dir = project_root / "train"
+            python_path = project_root / ".venv" / "bin" / "python"
+            fake_bin = Path(tmpdir) / "bin"
+            output_dir = Path(tmpdir) / "output"
+            train_dir.mkdir(parents=True)
+            python_path.parent.mkdir(parents=True)
+            fake_bin.mkdir()
+            (output_dir / "logs").mkdir(parents=True)
+
+            shutil.copy2(LAUNCHER, train_dir / LAUNCHER.name)
+            python_path.write_text(
+                "#!/usr/bin/env bash\necho resumed-training-output\n",
+                encoding="utf-8",
+            )
+            python_path.chmod(0o755)
+            fake_curl = fake_bin / "curl"
+            fake_curl.write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8")
+            fake_curl.chmod(0o755)
+
+            required_file = Path(tmpdir) / "required"
+            required_file.touch()
+            train_log = output_dir / "logs" / "train.log"
+            train_log.write_text("original-training-output\n", encoding="utf-8")
+            env = {
+                **os.environ,
+                "PATH": f"{fake_bin}:{os.environ['PATH']}",
+                "TRAIN_DATA": str(required_file),
+                "VAL_DATA": str(required_file),
+                "WORLD_MODEL": str(required_file),
+                "REWARD_FN_PATH": str(required_file),
+                "OUTPUT_DIR": str(output_dir),
+                "SFT_LOSS_COEF": "0.0",
+            }
+
+            result = subprocess.run(
+                ["bash", str(train_dir / LAUNCHER.name)],
+                cwd=project_root,
+                env=env,
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(
+                train_log.read_text(encoding="utf-8"),
+                "original-training-output\nresumed-training-output\n",
             )
 
 if __name__ == "__main__":

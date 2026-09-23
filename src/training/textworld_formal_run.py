@@ -34,6 +34,13 @@ def prepare_run(output_dir: Path, manifest: dict[str, Any], resume: bool) -> Pat
         tracker = output_dir / "latest_checkpointed_iteration.txt"
         if not tracker.is_file() or not tracker.read_text(encoding="utf-8").strip():
             raise ValueError("resume requires a non-empty checkpoint tracker")
+        checkpoint_step = int(tracker.read_text(encoding="utf-8").strip())
+        total_steps = int(manifest["total_steps"])
+        if checkpoint_step >= total_steps:
+            raise ValueError(
+                f"checkpoint step {checkpoint_step} has already reached "
+                f"configured total_steps {total_steps}"
+            )
         return manifest_path
 
     if output_dir.exists() and any(output_dir.iterdir()):

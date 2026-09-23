@@ -148,6 +148,22 @@ class TextWorldFormalRunTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "total_steps"):
                 prepare_run(output_dir, manifest(total_steps=3000), resume=True)
 
+    def test_resume_rejects_checkpoint_at_or_beyond_training_budget(self):
+        for checkpoint_step in (2000, 2001):
+            with self.subTest(checkpoint_step=checkpoint_step), tempfile.TemporaryDirectory() as tmpdir:
+                output_dir = Path(tmpdir) / "run"
+                expected = manifest(total_steps=2000)
+                prepare_run(output_dir, expected, resume=False)
+                (output_dir / "latest_checkpointed_iteration.txt").write_text(
+                    str(checkpoint_step), encoding="utf-8"
+                )
+
+                with self.assertRaisesRegex(
+                    ValueError,
+                    rf"checkpoint step {checkpoint_step} .* total_steps 2000",
+                ):
+                    prepare_run(output_dir, expected, resume=True)
+
     def test_resume_accepts_identical_manifest_and_tracker(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             output_dir = Path(tmpdir) / "run"
