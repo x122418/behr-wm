@@ -88,6 +88,79 @@ class VerlSFTAuxPatchInstallerTests(unittest.TestCase):
         self.assertIn("already applied", second.stdout)
         self.assertIn("VERL auxiliary SFT patch is installed", checked.stdout)
 
+    def test_apply_handles_upstream_context_drift_without_fuzzy_patching(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            site_packages = self.make_site_packages(Path(tmpdir), "0.7.1")
+            actor_path = site_packages / "verl/workers/actor/dp_actor.py"
+            source = actor_path.read_text(encoding="utf-8")
+            original = (
+                "                    if self.config.use_dynamic_bsz:\n"
+                "                        # relative to the dynamic bsz\n"
+            )
+            drifted = (
+                "                    # Added upstream after the project patch was authored.\n"
+                + original
+            )
+            self.assertEqual(source.count(original), 1)
+            actor_path.write_text(source.replace(original, drifted), encoding="utf-8")
+
+            applied = self.run_installer("--apply", site_packages)
+            checked = self.run_installer("--check", site_packages)
+            patched_source = actor_path.read_text(encoding="utf-8")
+
+            self.assertEqual(applied.returncode, 0, applied.stderr)
+            self.assertEqual(checked.returncode, 0, checked.stderr)
+            self.assertEqual(patched_source.count("if sft_loss_coef > 0:"), 3)
+            self.assertLess(
+                patched_source.index("# Added upstream after the project patch was authored."),
+                patched_source.index("                        sft_inputs = {"),
+            )
+            sft_index = patched_source.index("                        sft_inputs = {")
+            dynamic_index = patched_source.index(
+                "                    if self.config.use_dynamic_bsz:\n"
+                "                        # relative to the dynamic bsz\n",
+                sft_index,
+            )
+            self.assertLess(
+                sft_index,
+                dynamic_index,
+            )
+            self.assertFalse(actor_path.with_suffix(".py.rej").exists())
+
+    def test_unknown_context_drift_rolls_back_every_target(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            site_packages = self.make_site_packages(Path(tmpdir), "0.7.1")
+            actor_path = site_packages / "verl/workers/actor/dp_actor.py"
+            source = actor_path.read_text(encoding="utf-8")
+            original_anchor = (
+                "                    if self.config.use_dynamic_bsz:\n"
+                "                        # relative to the dynamic bsz\n"
+            )
+            unknown_anchor = original_anchor.replace(
+                "# relative to the dynamic bsz",
+                "# upstream renamed this block",
+            )
+            self.assertEqual(source.count(original_anchor), 1)
+            actor_path.write_text(
+                source.replace(original_anchor, unknown_anchor),
+                encoding="utf-8",
+            )
+            before = {
+                relative_path: (site_packages / relative_path).read_bytes()
+                for relative_path in TARGETS
+            }
+
+            applied = self.run_installer("--apply", site_packages)
+
+            self.assertNotEqual(applied.returncode, 0)
+            self.assertIn("compatibility anchor occurs 0 times", applied.stderr)
+            after = {
+                relative_path: (site_packages / relative_path).read_bytes()
+                for relative_path in TARGETS
+            }
+            self.assertEqual(after, before)
+            self.assertFalse(actor_path.with_suffix(".py.rej").exists())
+
 
 if __name__ == "__main__":
     unittest.main()
