@@ -68,6 +68,10 @@ bash eval/03_behavior_consistency/run_eval_bf.sh <path_to_test.json>
 
 ## TextWorld
 
+For the fixed seven-model comparison of the base checkpoint and the completed
+100-step LoRA pilots, use the staged and resumable
+[TextWorld pilot evaluation matrix](TEXTWORLD_PILOT_EVAL_MATRIX.md) runbook.
+
 All three metrics also apply to TextWorld. The `lookahead` variants of the
 Metric 2 scripts run the agent with inference-time world-model simulation:
 
