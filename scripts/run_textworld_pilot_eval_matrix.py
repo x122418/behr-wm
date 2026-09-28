@@ -14,7 +14,7 @@ import subprocess
 import sys
 import time
 from typing import Iterable, Sequence
-from urllib.request import Request, urlopen
+from urllib.request import ProxyHandler, Request, build_opener
 
 from scripts.export_textworld_lora_model import (
     PROVENANCE_NAME,
@@ -396,6 +396,7 @@ def _evaluation_command(
 
 def _wait_for_server(spec: ModelSpec, port: str, process: subprocess.Popen, timeout: int) -> None:
     url = f"http://127.0.0.1:{port}/v1/models"
+    local_opener = build_opener(ProxyHandler({}))
     deadline = time.monotonic() + timeout
     last_error = "not ready"
     while time.monotonic() < deadline:
@@ -403,7 +404,7 @@ def _wait_for_server(spec: ModelSpec, port: str, process: subprocess.Popen, time
             raise RuntimeError(f"{spec.name} server exited with {process.returncode}")
         try:
             request = Request(url, headers={"Accept": "application/json"})
-            with urlopen(request, timeout=5) as response:
+            with local_opener.open(request, timeout=5) as response:
                 payload = json.load(response)
             models = payload.get("data") or []
             root = models[0].get("root") if models else None

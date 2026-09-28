@@ -1,10 +1,16 @@
 import json
+import os
 from pathlib import Path
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import subprocess
 import tempfile
+import threading
 import unittest
+from unittest.mock import patch
 
 from scripts.run_textworld_pilot_eval_matrix import (
+    ModelSpec,
+    _wait_for_server,
     build_model_matrix,
     ensure_evaluation_contract,
     read_unique_jsonl,
@@ -27,6 +33,78 @@ def write_jsonl(path: Path, rows: list[dict]) -> None:
 
 
 class TextWorldPilotEvalMatrixTests(unittest.TestCase):
+    def test_server_readiness_bypasses_machine_http_proxy(self):
+        expected_model = Path("/models/candidate")
+
+        class HealthyHandler(BaseHTTPRequestHandler):
+            requests = 0
+
+            def do_GET(self):
+                type(self).requests += 1
+                payload = json.dumps(
+                    {"data": [{"root": str(expected_model)}]}
+                ).encode()
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(payload)))
+                self.end_headers()
+                self.wfile.write(payload)
+
+            def log_message(self, _format, *_args):
+                pass
+
+        class ProxyHandler(BaseHTTPRequestHandler):
+            requests = 0
+
+            def do_GET(self):
+                type(self).requests += 1
+                self.send_error(503)
+
+            def log_message(self, _format, *_args):
+                pass
+
+        class RunningProcess:
+            returncode = None
+
+            @staticmethod
+            def poll():
+                return None
+
+        healthy = ThreadingHTTPServer(("127.0.0.1", 0), HealthyHandler)
+        proxy = ThreadingHTTPServer(("127.0.0.1", 0), ProxyHandler)
+        threads = [
+            threading.Thread(target=server.serve_forever, daemon=True)
+            for server in (healthy, proxy)
+        ]
+        for thread in threads:
+            thread.start()
+        proxy_url = f"http://127.0.0.1:{proxy.server_port}"
+        try:
+            with patch.dict(
+                os.environ,
+                {
+                    "HTTP_PROXY": proxy_url,
+                    "http_proxy": proxy_url,
+                    "NO_PROXY": "",
+                    "no_proxy": "",
+                },
+            ):
+                _wait_for_server(
+                    ModelSpec("candidate", expected_model, None),
+                    str(healthy.server_port),
+                    RunningProcess(),
+                    timeout=1,
+                )
+        finally:
+            for server in (healthy, proxy):
+                server.shutdown()
+                server.server_close()
+            for thread in threads:
+                thread.join()
+
+        self.assertEqual(HealthyHandler.requests, 1)
+        self.assertEqual(ProxyHandler.requests, 0)
+
     def test_evaluation_contract_prevents_stale_cache_reuse(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             output_dir = Path(tmpdir) / "candidate"
