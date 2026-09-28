@@ -16,6 +16,7 @@ from scripts.run_textworld_pilot_eval_matrix import (
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = PROJECT_ROOT / "scripts" / "run_textworld_pilot_eval_matrix.py"
 LAUNCHER = PROJECT_ROOT / "scripts" / "run_textworld_pilot_eval_matrix.sh"
+FORMAL_LAUNCHER = PROJECT_ROOT / "scripts" / "run_textworld_formal_eval_matrix.sh"
 
 
 def write_jsonl(path: Path, rows: list[dict]) -> None:
@@ -78,6 +79,29 @@ class TextWorldPilotEvalMatrixTests(unittest.TestCase):
             Path("/pilot/checkpoints/union_js_sft/global_step_100/actor/lora_adapter"),
         )
         self.assertEqual(specs[-1].model_path, Path("/merged/union_js_sft_step100"))
+
+    def test_model_matrix_uses_explicit_adapter_specs_instead_of_pilot_defaults(self):
+        specs = build_model_matrix(
+            Path("/base"),
+            Path("/pilot"),
+            Path("/merged"),
+            adapter_specs=(
+                ("behr_step3500", Path("/adapters/behr/global_step_3500")),
+                (
+                    "union_js_sft_step3500",
+                    Path("/adapters/union_js_sft/global_step_3500"),
+                ),
+            ),
+        )
+
+        self.assertEqual(
+            [spec.name for spec in specs],
+            ["base", "behr_step3500", "union_js_sft_step3500"],
+        )
+        self.assertEqual(
+            specs[1].adapter_path, Path("/adapters/behr/global_step_3500")
+        )
+        self.assertEqual(specs[1].model_path, Path("/merged/behr_step3500"))
 
     def test_read_unique_jsonl_rejects_duplicate_item_ids(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -173,6 +197,42 @@ class TextWorldPilotEvalMatrixTests(unittest.TestCase):
             self.assertFalse(merged.exists())
             self.assertFalse(evaluation.exists())
 
+    def test_dry_run_accepts_explicit_adapter_specs_without_pilot_root(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            result = subprocess.run(
+                [
+                    str(PROJECT_ROOT / ".venv" / "bin" / "python"),
+                    str(SCRIPT),
+                    "--stage",
+                    "all",
+                    "--base-model",
+                    str(root / "base"),
+                    "--actor-model",
+                    str(root / "actor"),
+                    "--adapter-spec",
+                    f"behr_step3500={root / 'adapters' / 'behr'}",
+                    "--adapter-spec",
+                    f"union_js_step3500={root / 'adapters' / 'union_js'}",
+                    "--validation-data",
+                    str(root / "val.parquet"),
+                    "--merged-root",
+                    str(root / "merged"),
+                    "--evaluation-root",
+                    str(root / "evaluation"),
+                    "--dry-run",
+                ],
+                cwd=PROJECT_ROOT,
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertIn("behr_step3500", result.stdout)
+            self.assertIn("union_js_step3500", result.stdout)
+            self.assertNotIn("behr_step50", result.stdout)
+
     def test_shell_launcher_derives_shared_hdd_paths(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             result = subprocess.run(
@@ -194,6 +254,36 @@ class TextWorldPilotEvalMatrixTests(unittest.TestCase):
                 f"{tmpdir}/lwm_runs/textworld_lora_pilot100_seed42_retry1",
                 result.stdout,
             )
+
+    def test_formal_shell_launcher_selects_three_step3500_adapters(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            lwm_main = root / "LWM_project"
+            adapters = root / "artifacts" / "textworld_grpo_seed42" / "adapters"
+            result = subprocess.run(
+                ["bash", str(FORMAL_LAUNCHER), "all", "--dry-run"],
+                cwd=PROJECT_ROOT,
+                env={
+                    "PATH": "/usr/bin:/bin",
+                    "LWM_MAIN": str(lwm_main),
+                    "FORMAL_ADAPTER_ROOT": str(adapters),
+                    "TEXTWORLD_GRPO_VENV": str(PROJECT_ROOT / ".venv"),
+                    "RUN_ROOT": str(root / "runs"),
+                },
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            for name in (
+                "base",
+                "behr_step3500",
+                "union_js_step3500",
+                "union_js_sft_step3500",
+            ):
+                self.assertIn(name, result.stdout)
+            self.assertNotIn("behr_step50", result.stdout)
 
 
 if __name__ == "__main__":

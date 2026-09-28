@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run the fixed seven-model TextWorld pilot evaluation matrix."""
+"""Run an ordered TextWorld base-and-LoRA evaluation matrix."""
 
 from __future__ import annotations
 
@@ -38,9 +38,20 @@ class ModelSpec:
 
 
 def build_model_matrix(
-    base_model: Path, pilot_root: Path, merged_root: Path
+    base_model: Path,
+    pilot_root: Path | None,
+    merged_root: Path,
+    adapter_specs: Sequence[tuple[str, Path]] | None = None,
 ) -> list[ModelSpec]:
     specs = [ModelSpec("base", base_model, None)]
+    if adapter_specs is not None:
+        specs.extend(
+            ModelSpec(name, merged_root / name, adapter_path)
+            for name, adapter_path in adapter_specs
+        )
+        return specs
+    if pilot_root is None:
+        raise ValueError("pilot_root is required without explicit adapter specs")
     for arm in ("behr", "union_js", "union_js_sft"):
         for step in (50, 100):
             name = f"{arm}_step{step}"
@@ -130,6 +141,13 @@ def _csv_values(raw: str, label: str) -> list[str]:
     if not values:
         raise ValueError(f"{label} must contain at least one value")
     return values
+
+
+def _adapter_spec(raw: str) -> tuple[str, Path]:
+    name, separator, path = raw.partition("=")
+    if not separator or not name.strip() or not path.strip():
+        raise argparse.ArgumentTypeError("adapter spec must be NAME=PATH")
+    return name.strip(), Path(path.strip())
 
 
 def _chunks(values: Sequence[ModelSpec], size: int) -> Iterable[Sequence[ModelSpec]]:
@@ -523,7 +541,13 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument("--base-model", type=Path, required=True)
     parser.add_argument("--actor-model", type=Path, required=True)
-    parser.add_argument("--pilot-root", type=Path, required=True)
+    parser.add_argument("--pilot-root", type=Path)
+    parser.add_argument(
+        "--adapter-spec",
+        action="append",
+        type=_adapter_spec,
+        help="explicit adapter as NAME=PATH; repeat for each candidate",
+    )
     parser.add_argument("--validation-data", type=Path, required=True)
     parser.add_argument("--merged-root", type=Path, required=True)
     parser.add_argument("--evaluation-root", type=Path, required=True)
@@ -541,8 +565,19 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--server-timeout", type=int, default=600)
     parser.add_argument("--dry-run", action="store_true")
     args = parser.parse_args(argv)
-    for key in ("base_model", "actor_model", "pilot_root", "validation_data", "merged_root", "evaluation_root"):
+    if not args.adapter_spec and args.pilot_root is None:
+        parser.error("--pilot-root is required unless --adapter-spec is provided")
+    if args.adapter_spec:
+        names = [name for name, _ in args.adapter_spec]
+        if "base" in names or len(names) != len(set(names)):
+            parser.error("--adapter-spec names must be unique and cannot be 'base'")
+        args.adapter_spec = [
+            (name, path.resolve()) for name, path in args.adapter_spec
+        ]
+    for key in ("base_model", "actor_model", "validation_data", "merged_root", "evaluation_root"):
         setattr(args, key, getattr(args, key).resolve())
+    if args.pilot_root is not None:
+        args.pilot_root = args.pilot_root.resolve()
     args.merge_gpus = _csv_values(args.merge_gpus, "--merge-gpus")
     args.server_gpus = _csv_values(args.server_gpus, "--server-gpus")
     args.score_gpus = _csv_values(args.score_gpus, "--score-gpus")
@@ -554,7 +589,12 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
 
 def main(argv: Sequence[str] | None = None) -> int:
     args = parse_args(argv)
-    specs = build_model_matrix(args.base_model, args.pilot_root, args.merged_root)
+    specs = build_model_matrix(
+        args.base_model,
+        args.pilot_root,
+        args.merged_root,
+        adapter_specs=args.adapter_spec,
+    )
     if args.dry_run:
         print_dry_run(specs, args)
         return 0
