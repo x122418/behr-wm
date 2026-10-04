@@ -1,3 +1,11 @@
+import json
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+import os
+from pathlib import Path
+import subprocess
+import sys
+import tempfile
+import threading
 import unittest
 
 from src.data.evaluate_textworld_transition_baseline import (
@@ -107,6 +115,97 @@ class TransitionFromRowTests(unittest.TestCase):
         self.assertEqual(transition["real_observation"], "real next state")
         self.assertEqual(transition["logged_action"], "go east")
         self.assertEqual(transition["task_id"], 1)
+
+
+class GenerateOnlyCliTests(unittest.TestCase):
+    def test_generate_stage_writes_predictions_without_loading_actor(self):
+        class Handler(BaseHTTPRequestHandler):
+            def do_GET(self):
+                payload = {"data": [{"id": "test-wm"}]}
+                body = json.dumps(payload).encode()
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+            def do_POST(self):
+                length = int(self.headers["Content-Length"])
+                self.rfile.read(length)
+                payload = {"choices": [{"message": {"content": "predicted state"}}]}
+                body = json.dumps(payload).encode()
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+            def log_message(self, format, *args):
+                return
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            import pandas as pd
+
+            root = Path(temp_dir)
+            parquet = root / "input.parquet"
+            pd.DataFrame(
+                [
+                    {
+                        "item_id": "sample-1",
+                        "prompt": [{"role": "system", "content": "room"}],
+                        "reward_model": {"ground_truth": "real state"},
+                        "extra_info": {
+                            "expert_action": "look",
+                            "history": [{"role": "system", "content": "room"}],
+                            "task_id": 1,
+                        },
+                    }
+                ]
+            ).to_parquet(parquet)
+            server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+            thread = threading.Thread(target=server.serve_forever, daemon=True)
+            thread.start()
+            output_dir = root / "output"
+            try:
+                env = os.environ.copy()
+                env["PYTHONPATH"] = str(Path.cwd())
+                env["NO_PROXY"] = "127.0.0.1,localhost"
+                env["no_proxy"] = env["NO_PROXY"]
+                completed = subprocess.run(
+                    [
+                        sys.executable,
+                        "src/data/evaluate_textworld_transition_baseline.py",
+                        "--input",
+                        str(parquet),
+                        "--output-dir",
+                        str(output_dir),
+                        "--actor-model-path",
+                        str(root / "actor-does-not-exist"),
+                        "--wm-api-base",
+                        f"http://127.0.0.1:{server.server_port}",
+                        "--stage",
+                        "generate",
+                    ],
+                    text=True,
+                    capture_output=True,
+                    check=False,
+                    env=env,
+                )
+            finally:
+                server.shutdown()
+                server.server_close()
+                thread.join(timeout=2)
+
+            self.assertEqual(completed.returncode, 0, completed.stderr)
+            generations = [
+                json.loads(line)
+                for line in (output_dir / "generations.jsonl")
+                .read_text(encoding="utf-8")
+                .splitlines()
+            ]
+            self.assertEqual(generations[0]["predicted_observation"], "predicted state")
+            self.assertTrue((output_dir / "generation_summary.json").exists())
+            self.assertFalse((output_dir / "results.jsonl").exists())
 
 
 if __name__ == "__main__":

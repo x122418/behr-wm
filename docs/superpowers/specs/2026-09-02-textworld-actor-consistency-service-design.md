@@ -28,8 +28,8 @@ reward workers.
 Run one independent HTTP service on the GPU assigned to the frozen Qwen3-8B
 reference actor. The service owns exactly one tokenizer and one model instance.
 GRPO reward workers send histories, observations, and logged actions; the
-service constructs a two-example real/predicted batch, performs one
-teacher-forced actor forward pass, computes divergences locally, and returns
+service constructs real/predicted inputs, performs two serialized unpadded
+teacher-forced actor forward passes, computes divergences locally, and returns
 only scalar metrics.
 
 ```text
@@ -40,7 +40,7 @@ verl/Ray compute_score workers
 actor consistency service (one process, one frozen actor GPU)
            |
            +-- shared prompt construction and action-token alignment
-           +-- batched real/predicted forward pass
+           +-- serialized unpadded real/predicted forward passes
            +-- full-vocabulary KL/JS
            +-- union-top-k plus OTHER JS
            |
@@ -165,8 +165,8 @@ It never substitutes a fabricated numeric reward.
 
 The first version serializes model forward passes with an inference lock. This
 prevents concurrent HTTP requests from causing uncontrolled activation-memory
-spikes. Each forward pass contains the real and predicted examples as one
-padded batch of two.
+spikes. Each request uses two unpadded forwards. This matches the locked offline
+scorer and avoids padding-dependent numerical drift on unequal, long prompts.
 
 FastAPI may accept concurrent connections, but requests wait at the inference
 lock. This prioritizes correctness and bounded memory for the pilot. Timing and
@@ -228,7 +228,7 @@ All production changes follow red-green-refactor.
 
 3. Service tests with a tiny fake tokenizer/model:
    - API schema and status codes;
-   - real/predicted examples are passed in one batch;
+   - real/predicted examples use two serialized unpadded forwards;
    - response metrics equal the pure scorer output;
    - health is false before readiness and includes provenance after readiness;
    - inference failures do not return a numeric score.
@@ -253,4 +253,3 @@ All production changes follow red-green-refactor.
 - JS reward failures are explicit and never silently change objectives.
 - A two-step JS GRPO smoke completes before the 50-step matched pilot.
 - The complete CPU test suite passes without requiring a GPU or model load.
-

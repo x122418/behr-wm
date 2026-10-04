@@ -3,6 +3,7 @@ from agentenv.controller.types import ActionFormat
 
 import json
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from pathlib import Path
 
 def read_json(file_name):
     with open(file_name, "r") as f:
@@ -208,18 +209,25 @@ def process_single_example(json_file, port=36001, verbose=True):
     write_json(output, output_file)
     return False
 
-def main(test_file_root, port=36001, max_workers=40):
+def discover_replay_files(test_file_root, task, n_samples=-1):
+    root = Path(test_file_root)
+    files = sorted(
+        root.glob(f"{task}_*.json"),
+        key=lambda path: int(path.stem.rsplit("_", 1)[-1]),
+    )
+    if n_samples is not None and int(n_samples) > 0:
+        files = files[: int(n_samples)]
+    return [str(path) for path in files]
+
+
+def main(test_file_root, port=36001, max_workers=40, n_samples=-1):
     import os
     from tqdm import tqdm
     import time
 
     # Only count per-sample jsons produced by run.py, e.g. "{TASK}_{id}.json"
     # Avoid including aggregated files like "metrics.json" which would double-count.
-    json_files = [
-        os.path.join(test_file_root, f)
-        for f in os.listdir(test_file_root)
-        if f.endswith(".json") and f.startswith(f"{TASK}_")
-    ]
+    json_files = discover_replay_files(test_file_root, TASK, n_samples=n_samples)
     total_files = len(json_files)
 
     # Resume: check existing results under valid_on_real_env
@@ -320,8 +328,14 @@ if __name__ == "__main__":
     parser.add_argument("--test_file_root", type=str, required=True, help="The folder containing test json files.")
     parser.add_argument("--port", type=int, required=False, default=36001, help="The port of the real environment server.")
     parser.add_argument("--max_workers", type=int, required=False, default=50, help="The max workers for ThreadPoolExecutor.")
+    parser.add_argument("--n_samples", type=int, required=False, default=-1, help="Replay only the first N task IDs (-1 for all).")
     args = parser.parse_args()
 
     global TASK
     TASK = args.task
-    main(args.test_file_root, port=args.port, max_workers=args.max_workers)
+    main(
+        args.test_file_root,
+        port=args.port,
+        max_workers=args.max_workers,
+        n_samples=args.n_samples,
+    )

@@ -9,7 +9,7 @@
 # This script evaluates agent performance in the world model.
 # =============================================================================
 
-set -x
+set -euo pipefail
 
 # Get script directory
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
@@ -41,8 +41,9 @@ TEMPERATURE="${6:-0}"
 # 关闭: 确定性输出 (temp=0, top_p=1, max_tokens=4096)
 ENABLE_THINKING="${7:-false}"
 WM_PORT="${WM_PORT:-8001}"               # 可通过环境变量覆盖
-WM_NAME="llm_world_model"               # vLLM WM 服务模型名
-MAX_STEPS=50
+MAX_STEPS="${MAX_STEPS:-50}"
+N_SAMPLES="${N_SAMPLES:--1}"
+WM_NAME="${WM_NAME:-llm_world_model}"
 OUTPUT_ROOT="$PROJECT_ROOT/outputs/task_success_rate"
 
 # Test data - use init_contexts for agent/wm system prompts (based on TASK)
@@ -50,8 +51,7 @@ AGENT_INSTRUCT_FILE="$PROJECT_ROOT/data/init_contexts/$TASK/agent_instruct_test.
 WM_INSTRUCT_FILE="$PROJECT_ROOT/data/init_contexts/$TASK/wm_instruct_test.json"
 
 # Output directory - use actual model path for naming
-OUTPUT_DIR="$OUTPUT_ROOT/wm/$TASK/$(basename $AGENT_MODEL_PATH)"
-mkdir -p "$OUTPUT_DIR"
+OUTPUT_DIR="$OUTPUT_ROOT/wm/$TASK/$(basename "$AGENT_MODEL_PATH")"
 
 echo "=========================================="
 echo "Task Success Rate - World Model"
@@ -69,27 +69,44 @@ echo "Output:            $OUTPUT_DIR"
 echo "=========================================="
 
 # Check if WM server is running
-if ! curl -s "http://localhost:$WM_PORT/v1/models" > /dev/null; then
+export NO_PROXY="127.0.0.1,localhost${NO_PROXY:+,$NO_PROXY}"
+export no_proxy="$NO_PROXY"
+
+COMMAND=(
+    "$PROJECT_ROOT/.venv/bin/python" "$SCRIPT_DIR/interact_with_wm.py"
+    --task "$TASK"
+    --model "$AGENT_MODEL"
+    --api-key "$API_KEY"
+    --api-base-url "$API_BASE_URL"
+    --wm-port "$WM_PORT"
+    --wm-name "$WM_NAME"
+    --max-steps "$MAX_STEPS"
+    --max-concurrency "$MAX_CONCURRENCY"
+    --agent-instruct-file "$AGENT_INSTRUCT_FILE"
+    --wm-instruct-file "$WM_INSTRUCT_FILE"
+    --temperature "$TEMPERATURE"
+    --n_samples "$N_SAMPLES"
+    --output-root "$OUTPUT_DIR"
+)
+if [[ "$ENABLE_THINKING" == "true" ]]; then
+    COMMAND+=(--enable-thinking)
+fi
+
+if [[ "${DRY_RUN:-0}" == "1" ]]; then
+    printf '%q ' "${COMMAND[@]}"
+    printf '\n'
+    exit 0
+fi
+
+mkdir -p "$OUTPUT_DIR"
+if ! curl --noproxy '*' -fsS "http://127.0.0.1:$WM_PORT/v1/models" > /dev/null; then
     echo "Error: World Model server not running on port $WM_PORT"
     echo "Please start it first: bash scripts/servers/start_wm_server.sh"
     exit 1
 fi
 
 # === Run Evaluation ===
-python "$SCRIPT_DIR/interact_with_wm.py" \
-    --task "$TASK" \
-    --model "$AGENT_MODEL" \
-    --api-key "$API_KEY" \
-    --api-base-url "$API_BASE_URL" \
-    --wm-port $WM_PORT \
-    --wm-name "$WM_NAME" \
-    --max-steps $MAX_STEPS \
-    --max-concurrency $MAX_CONCURRENCY \
-    --agent-instruct-file "$AGENT_INSTRUCT_FILE" \
-    --wm-instruct-file "$WM_INSTRUCT_FILE" \
-    --temperature $TEMPERATURE \
-    $([ "$ENABLE_THINKING" = "true" ] && echo "--enable-thinking") \
-    --output-root "$OUTPUT_DIR"
+"${COMMAND[@]}"
 
 echo "=========================================="
 echo "Evaluation Complete!"

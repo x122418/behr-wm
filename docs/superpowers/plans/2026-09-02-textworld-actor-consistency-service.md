@@ -246,10 +246,10 @@ git commit -m "refactor: share actor distribution metrics"
 - Produces: `engine.score(history, real_observation, predicted_observation, expert_action, reward_metric) -> dict[str, Any]`.
 - Consumes Task 1 input builder and Task 2 metric/reward functions.
 
-- [ ] **Step 1: Write a failing fake-model batching test**
+- [ ] **Step 1: Write a failing fake-model inference test**
 
 Use a fake model that records call count and batch size and returns deterministic
-`[2, max_T, V]` logits:
+`[1, T, V]` logits:
 
 ```python
 result = engine.score(
@@ -259,8 +259,8 @@ result = engine.score(
     expert_action="go east",
     reward_metric="union_topk_other_js",
 )
-self.assertEqual(fake_model.call_count, 1)
-self.assertEqual(fake_model.last_batch_size, 2)
+self.assertEqual(fake_model.call_count, 2)
+self.assertEqual(fake_model.last_batch_size, 1)
 self.assertEqual(result["reward_metric"], "union_topk_other_js")
 self.assertIn("top2_union_other_js", result)
 self.assertGreaterEqual(result["score"], 0.0)
@@ -278,26 +278,25 @@ and that `model.eval()` plus `torch.inference_mode()` are used.
 
 Expected: missing engine module.
 
-- [ ] **Step 3: Implement padding and one-call inference**
+- [ ] **Step 3: Implement serialized unpadded inference**
 
-Build the real and predicted inputs independently, verify action IDs, left-pad
-or right-pad consistently with an attention mask, and call the model once:
+Build the real and predicted inputs independently, verify action IDs, and score
+each without padding under the same lock:
 
 ```python
-batch_ids = pad_sequence([real_ids, predicted_ids], batch_first=True,
-                         padding_value=tokenizer.pad_token_id)
-attention_mask = batch_ids.ne(tokenizer.pad_token_id)
 with self._inference_lock, torch.inference_mode():
-    outputs = self.model(
-        input_ids=batch_ids.to(self.device),
-        attention_mask=attention_mask.to(self.device),
-        use_cache=False,
-    )
+    for sequence in (real_ids, predicted_ids):
+        input_ids = sequence.unsqueeze(0).to(self.device)
+        outputs = self.model(
+            input_ids=input_ids,
+            attention_mask=torch.ones_like(input_ids),
+            use_cache=False,
+        )
 ```
 
-Right-pad the batch, retain each unpadded input length `L_i`, and select
-`outputs.logits[i, L_i - T:L_i, :]` for the `T` causal positions predicting
-the logged action. Do not assume the two full prompts have equal lengths.
+Select the last `T` logits from each forward for the causal positions predicting
+the logged action. Do not pad unequal prompts: locked-equivalence probing showed
+padding-dependent numerical drift on long Qwen3 trajectories.
 Convert only the aligned `[T, V]` slices to float32 before invoking Task 2
 metrics.
 
@@ -328,7 +327,7 @@ wait seconds. Never catch model exceptions inside the engine.
 
 ```bash
 git add src/reward/textworld_consistency_engine.py tests/test_textworld_consistency_engine.py
-git commit -m "feat: add batched TextWorld consistency engine"
+git commit -m "feat: add TextWorld consistency engine"
 ```
 
 ---

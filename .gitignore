@@ -26,6 +26,14 @@ Thumbs.db
 *.tar.gz
 *.parquet
 
+# Data fetched by scripts/download_data.py (not vendored)
+data/llama_factory/
+data/eval/
+data/textworld/
+data/train/
+data/test/
+data/init_contexts/*/*_train.json
+
 # Outputs (generated during evaluation/training)
 outputs/checkpoints/
 outputs/logs/

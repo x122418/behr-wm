@@ -1,0 +1,178 @@
+#!/usr/bin/env bash
+# Matched 2,000-step TextWorld formal experiment launcher.
+
+set -euo pipefail
+
+DRY_RUN=false
+case "${1:-}" in
+    "") ;;
+    --dry-run) DRY_RUN=true ;;
+    -h|--help)
+        echo "Usage: FORMAL_ARM=behr|union_js|union_js_sft $0 [--dry-run]"
+        exit 0
+        ;;
+    *) echo "ERROR: unknown argument: $1" >&2; exit 2 ;;
+esac
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+MAIN_ROOT="$(cd "${PROJECT_ROOT}/../.." && pwd)"
+
+FORMAL_ARM="${FORMAL_ARM:-}"
+case "${FORMAL_ARM}" in
+    behr)
+        REWARD_MODE=cauchy
+        SFT_LOSS_COEF=0.0
+        ;;
+    union_js)
+        REWARD_MODE=union_js
+        SFT_LOSS_COEF=0.0
+        ;;
+    union_js_sft)
+        REWARD_MODE=union_js
+        SFT_LOSS_COEF=0.1
+        ;;
+    *)
+        echo "ERROR: FORMAL_ARM must be one of: behr, union_js, union_js_sft" >&2
+        exit 2
+        ;;
+esac
+
+FORMAL_SEED="${FORMAL_SEED:-42}"
+FORMAL_RESUME="${FORMAL_RESUME:-0}"
+case "${FORMAL_RESUME}" in
+    0)
+        RESUME_MODE=disable
+        PREFLIGHT_MODE=(--new-run)
+        ;;
+    1)
+        RESUME_MODE=auto
+        PREFLIGHT_MODE=(--resume)
+        ;;
+    *) echo "ERROR: FORMAL_RESUME must be 0 or 1" >&2; exit 2 ;;
+esac
+
+TRAIN_DATA="${TRAIN_DATA:-${MAIN_ROOT}/data/processed/textworld_grpo_task_split_v1/train/full.parquet}"
+VAL_DATA="${VAL_DATA:-${MAIN_ROOT}/data/processed/textworld_grpo_task_split_v1/val/pilot.parquet}"
+WORLD_MODEL="${WORLD_MODEL:-${MAIN_ROOT}/models/WorldModel-Textworld-Qwen2.5-7B}"
+ACTOR_MODEL="${ACTOR_MODEL:-/DATA/disk1/huangjiaqi_data/qwen_model/Qwen3-8B}"
+JUDGE_URL="${JUDGE_URL:-http://127.0.0.1:8000}"
+CONSISTENCY_URL="${CONSISTENCY_URL:-http://127.0.0.1:8002}"
+if [[ "${REWARD_MODE}" == "cauchy" ]]; then
+    SCORER_URL="${JUDGE_URL}"
+else
+    SCORER_URL="${CONSISTENCY_URL}"
+fi
+
+GROUP_SIZE="${GROUP_SIZE:-4}"
+ROLLOUT_TEMPERATURE="${ROLLOUT_TEMPERATURE:-0.7}"
+TOTAL_STEPS="${TOTAL_STEPS:-2000}"
+SAVE_FREQ="${SAVE_FREQ:-1000}"
+VAL_FREQ="${VAL_FREQ:-250}"
+MAX_ACTOR_CKPT_TO_KEEP="${MAX_ACTOR_CKPT_TO_KEEP:-1}"
+ACTOR_LR="${ACTOR_LR:-5e-6}"
+REWARD_NUM_WORKERS="${REWARD_NUM_WORKERS:-8}"
+LORA_RANK="${LORA_RANK:-32}"
+LORA_ALPHA="${LORA_ALPHA:-32}"
+LORA_TARGET_MODULES="${LORA_TARGET_MODULES:-all-linear}"
+HF_DATASETS_CACHE="${HF_DATASETS_CACHE:-/DATA/disk1/huangjiaqi_cache/lwm_hf_datasets}"
+RAY_TEMP_DIR="${RAY_TEMP_DIR:-/DATA/disk1/huangjiaqi_cache/lwm_ray}"
+FILTER_OVERLONG_PROMPTS="${FILTER_OVERLONG_PROMPTS:-False}"
+case "${FILTER_OVERLONG_PROMPTS}" in
+    True) FILTER_OVERLONG_FLAG=(--filter-overlong-prompts) ;;
+    False) FILTER_OVERLONG_FLAG=(--no-filter-overlong-prompts) ;;
+    *) echo "ERROR: FILTER_OVERLONG_PROMPTS must be True or False" >&2; exit 2 ;;
+esac
+OUTPUT_DIR="${OUTPUT_DIR:-${PROJECT_ROOT}/outputs/checkpoints/textworld_formal_${FORMAL_ARM}_lora_r${LORA_RANK}_steps${TOTAL_STEPS}_seed${FORMAL_SEED}}"
+EXPERIMENT_NAME="${EXPERIMENT_NAME:-formal-${FORMAL_ARM}-textworld-lora-r${LORA_RANK}-steps${TOTAL_STEPS}-seed${FORMAL_SEED}}"
+if [[ -n "${CUMEM_RUNTIME_GUARD:-}" ]]; then
+    CUMEM_GUARD_COMMAND=("${CUMEM_RUNTIME_GUARD}")
+else
+    CUMEM_GUARD_COMMAND=(
+        "${PROJECT_ROOT}/.venv/bin/python"
+        "${PROJECT_ROOT}/scripts/env_setup/check_vllm_cumem_runtime.py"
+    )
+fi
+
+export TRAIN_DATA VAL_DATA WORLD_MODEL REWARD_MODE SFT_LOSS_COEF
+export GROUP_SIZE ROLLOUT_TEMPERATURE TOTAL_STEPS SAVE_FREQ VAL_FREQ
+export OUTPUT_DIR EXPERIMENT_NAME JUDGE_URL CONSISTENCY_URL
+export DATA_SEED="${FORMAL_SEED}"
+export ACTOR_DATA_LOADER_SEED="${FORMAL_SEED}"
+export MAX_ACTOR_CKPT_TO_KEEP RESUME_MODE
+export ACTOR_LR REWARD_NUM_WORKERS LORA_RANK LORA_ALPHA LORA_TARGET_MODULES
+export HF_DATASETS_CACHE
+export RAY_TEMP_DIR
+export FILTER_OVERLONG_PROMPTS
+
+echo "TextWorld formal experiment"
+echo "  Arm: ${FORMAL_ARM}"
+echo "  Data/actor seed: ${FORMAL_SEED}"
+echo "  Reward mode: ${REWARD_MODE}"
+echo "  Auxiliary SFT coefficient: ${SFT_LOSS_COEF}"
+echo "  Actor learning rate: ${ACTOR_LR}"
+echo "  Reward workers: ${REWARD_NUM_WORKERS}"
+echo "  LoRA rank/alpha/targets: ${LORA_RANK}/${LORA_ALPHA}/${LORA_TARGET_MODULES}"
+echo "  Output: ${OUTPUT_DIR}"
+echo "  Resume: ${FORMAL_RESUME}"
+echo "  HF datasets cache: ${HF_DATASETS_CACHE}"
+echo "  Ray temp directory: ${RAY_TEMP_DIR}"
+
+if ! "$DRY_RUN"; then
+    if "${CUMEM_GUARD_COMMAND[@]}"; then
+        :
+    else
+        guard_status=$?
+        echo "ERROR: vLLM CuMem runtime guard failed" >&2
+        exit "${guard_status}"
+    fi
+    for path in "${TRAIN_DATA}" "${VAL_DATA}" "${WORLD_MODEL}" "${ACTOR_MODEL}"; do
+        [[ -e "${path}" ]] || { echo "ERROR: required path not found: ${path}" >&2; exit 1; }
+    done
+    mkdir -p "${HF_DATASETS_CACHE}"
+    mkdir -p "${RAY_TEMP_DIR}"
+    curl --noproxy 127.0.0.1,localhost -fsS --connect-timeout 10 \
+        "${SCORER_URL}/health" >/dev/null || {
+        echo "ERROR: reward scorer is not healthy at ${SCORER_URL}" >&2
+        exit 1
+    }
+    "${PROJECT_ROOT}/.venv/bin/python" \
+        "${PROJECT_ROOT}/src/training/textworld_formal_run.py" \
+        "${PREFLIGHT_MODE[@]}" \
+        --output-dir "${OUTPUT_DIR}" \
+        --arm "${FORMAL_ARM}" \
+        --reward-mode "${REWARD_MODE}" \
+        --sft-loss-coef "${SFT_LOSS_COEF}" \
+        --train-data "${TRAIN_DATA}" \
+        --val-data "${VAL_DATA}" \
+        --world-model "${WORLD_MODEL}" \
+        --actor-model "${ACTOR_MODEL}" \
+        --scorer-url "${SCORER_URL}" \
+        --seed "${FORMAL_SEED}" \
+        --actor-data-loader-seed "${FORMAL_SEED}" \
+        --group-size "${GROUP_SIZE}" \
+        --rollout-temperature "${ROLLOUT_TEMPERATURE}" \
+        --total-steps "${TOTAL_STEPS}" \
+        --save-freq "${SAVE_FREQ}" \
+        --val-freq "${VAL_FREQ}" \
+        --max-actor-ckpt-to-keep "${MAX_ACTOR_CKPT_TO_KEEP}" \
+        --actor-lr "${ACTOR_LR}" \
+        --reward-num-workers "${REWARD_NUM_WORKERS}" \
+        --lora-rank "${LORA_RANK}" \
+        --lora-alpha "${LORA_ALPHA}" \
+        --lora-target-modules "${LORA_TARGET_MODULES}" \
+        --rollout-load-format safetensors \
+        --layered-summon \
+        "${FILTER_OVERLONG_FLAG[@]}"
+fi
+
+if "$DRY_RUN"; then
+    exec bash "${SCRIPT_DIR}/run_grpo_textworld_smoke.sh" --dry-run
+fi
+bash "${SCRIPT_DIR}/run_grpo_textworld_smoke.sh"
+if [[ "${SAVE_FREQ}" =~ ^[1-9][0-9]*$ && "${MAX_ACTOR_CKPT_TO_KEEP}" =~ ^[1-9][0-9]*$ ]]; then
+    "${PROJECT_ROOT}/.venv/bin/python" \
+        "${PROJECT_ROOT}/src/training/textworld_checkpoint_retention.py" \
+        --output-dir "${OUTPUT_DIR}" \
+        --keep "${MAX_ACTOR_CKPT_TO_KEEP}"
+fi
