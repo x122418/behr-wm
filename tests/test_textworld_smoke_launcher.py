@@ -228,6 +228,13 @@ class TextWorldSmokeLauncherTests(unittest.TestCase):
         self.assertIn("export NO_PROXY=127.0.0.1,localhost", launcher)
         self.assertIn("export no_proxy=127.0.0.1,localhost", launcher)
 
+    def test_project_root_is_exported_on_pythonpath_for_ray_workers(self):
+        launcher = LAUNCHER.read_text(encoding="utf-8")
+        export = 'export PYTHONPATH="${PROJECT_ROOT}${PYTHONPATH:+:${PYTHONPATH}}"'
+
+        self.assertIn(export, launcher)
+        self.assertLess(launcher.index(export), launcher.rindex('"${COMMAND[@]}"'))
+
     def test_local_reference_actor_path_is_forwarded_to_reward_workers(self):
         env = os.environ.copy()
         env["JUDGE_MODEL_PATH"] = "/models/local-qwen3-8b"

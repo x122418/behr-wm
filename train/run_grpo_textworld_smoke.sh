@@ -222,4 +222,5 @@ export WANDB_MODE=disabled
 export TENSORBOARD_DIR
 export NO_PROXY=127.0.0.1,localhost
 export no_proxy=127.0.0.1,localhost
+export PYTHONPATH="${PROJECT_ROOT}${PYTHONPATH:+:${PYTHONPATH}}"
 "${COMMAND[@]}" 2>&1 | tee -a "${OUTPUT_DIR}/logs/train.log"

@@ -15,11 +15,8 @@ TRACKER_NAME = "latest_checkpointed_iteration.txt"
 CHECKPOINT_PATTERN = re.compile(r"global_step_([0-9]+)")
 
 
-def prune_checkpoints(output_dir: Path, keep: int) -> list[Path]:
-    """Remove old completed checkpoints while preserving the tracked latest ones."""
-    if not isinstance(keep, int) or isinstance(keep, bool) or keep <= 0:
-        raise ValueError("checkpoint retention must be a positive integer")
-
+def validated_checkpoints(output_dir: Path) -> list[tuple[int, Path]]:
+    """Return tracked checkpoints only after validating the run lifecycle."""
     output_dir = Path(output_dir)
     if not (output_dir / MANIFEST_NAME).is_file():
         raise ValueError(f"checkpoint pruning requires a formal run manifest: {MANIFEST_NAME}")
@@ -50,6 +47,15 @@ def prune_checkpoints(output_dir: Path, keep: int) -> list[Path]:
         )
 
     checkpoints.sort(key=lambda item: item[0])
+    return checkpoints
+
+
+def prune_checkpoints(output_dir: Path, keep: int) -> list[Path]:
+    """Remove old completed checkpoints while preserving the tracked latest ones."""
+    if not isinstance(keep, int) or isinstance(keep, bool) or keep <= 0:
+        raise ValueError("checkpoint retention must be a positive integer")
+
+    checkpoints = validated_checkpoints(output_dir)
     to_remove = checkpoints[:-keep]
     removed: list[Path] = []
     for _, path in to_remove:
